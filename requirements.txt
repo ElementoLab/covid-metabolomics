@@ -1,1 +1,9 @@
 pandas
+sklearn
+umap
+statsmodels
+numpy
+seaborn
+matplotlib
+git+https://github.com/ElementoLab/imc.git
+git+https://github.com/afrendeiro/seaborn_extensions.git
