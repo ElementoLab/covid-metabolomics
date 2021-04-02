@@ -6,6 +6,7 @@ Analysis of Olink data from COVID-19 patients.
 
 import sys, io, argparse
 from typing import Sequence, Tuple
+from functools import partial
 
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
@@ -17,6 +18,8 @@ from sklearn.manifold import MDS, Isomap, TSNE, SpectralEmbedding  # type: ignor
 from umap import UMAP  # type: ignore
 import statsmodels.api as sm  # type: ignore
 import statsmodels.formula.api as smf  # type: ignore
+import pymde  # type: ignore
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from imc.types import Path, DataFrame  # type: ignore
 from seaborn_extensions import clustermap, swarmboxenplot  # type: ignore
@@ -37,22 +40,27 @@ attributes = [
     "age",
     "sex",
     "obesity",
+    "bmi",
     "hospitalized",
-    "WHO_classification",
+    "patient_group",
+    "WHO_score_sample",
+    "WHO_score_patient",
     "alive",
 ]
 
 palettes = dict(
     race=sns.color_palette("tab10"),
     sex=sns.color_palette("Pastel1")[3:5],
-    obesity=sns.color_palette("tab10")[3:5],
+    obesity=sns.color_palette("tab10")[3:6][::-1],
     hospitalized=sns.color_palette("Set2")[:2],
-    WHO_classification=np.asarray(sns.color_palette("Set1"))[
-        [2, 1, 7, 3, 4, 0]
+    patient_group=np.asarray(sns.color_palette("Set1"))[
+        [2, 1, 7, 3, 0]
     ].tolist(),
+    WHO_score_sample=sns.color_palette("inferno", 9),
+    WHO_score_patient=sns.color_palette("inferno", 9),
     alive=sns.color_palette("Dark2")[:2],
 )
-cmaps = dict(age="winter_r")
+cmaps = dict(age="winter_r", bmi="copper")
 
 cli = None
 
@@ -61,10 +69,15 @@ def main(cli: Sequence[str] = None) -> int:
     args = get_parser().parse_args(cli)
 
     x, y = get_x_y()
+    feature_annotations = get_feature_annotations(x)
 
-    unsupervised(x, y)
+    unsupervised(x, y, attributes)
 
     get_explanatory_variables(x, y)
+
+    overlay_individuals_over_global(x, y)
+
+    supervised(x, y, [a for a in attributes if a in palettes])
 
     return 0
 
@@ -89,24 +102,124 @@ def get_x_y() -> Tuple[DataFrame, DataFrame]:
     y["race"] = pd.Categorical(y["race"])
     y["age"] = y["age"].astype(float)
     y["sex"] = pd.Categorical(y["sex"].str.capitalize())
+    y["bmi"] = (
+        y["bmi"].str.replace("\xa0", "").replace("30-45", "30.45")
+    ).astype(float)
     y["obesity"] = pd.Categorical(
         y["obesity"].replace("overwheight", "overweight"),
         ordered=True,
         categories=["nonobese", "overweight", "obese"],
     )
+    y["underlying_pulm_disease"] = pd.Categorical(
+        y["Underlying_Pulm_disease"].replace(
+            {"no": False, "yes": True, "Yes": True}
+        )
+    )
     y["hospitalized"] = pd.Categorical(
         y["hospitalized"].replace({"no": False, "yes": True})
     )
-    y["WHO_classification"] = pd.Categorical(
+    y["patient_group"] = pd.Categorical(
         y["WHO_classification"].replace("mid", "mild"),
         ordered=True,
         categories=["uninfected", "low", "mild", "moderate", "severe"],
     )
+    y["WHO_score_patient"] = pd.Categorical(
+        y["WHO_score__based_on_the_entire_course_"].astype(pd.Int64Dtype()),
+        ordered=True,
+    )
+    y["WHO_score_sample"] = pd.Categorical(
+        y["WHO_classification_at_the_specific_day"].astype(pd.Int64Dtype()),
+        ordered=True,
+    )
+    y = y.drop(
+        [
+            "WHO_classification",
+            "WHO_classification_at_the_specific_day",
+            "WHO_score__based_on_the_entire_course_",
+        ],
+        axis=1,
+    )
+
     y["alive"] = pd.Categorical(
         y["alive"], ordered=True, categories=["alive", "dead"]
     )
+    y["date_sample"] = pd.to_datetime(y["date_sample"])
+    y["patient_code"] = y["patient_code"].astype(pd.Int64Dtype())
+
+    # reorder columns
+    y = y.reindex(
+        columns=(
+            y.columns[y.columns.tolist().index("date_sample") :].tolist()
+            + y.columns[: y.columns.tolist().index("date_sample")].tolist()
+        )
+    )
 
     return x, y
+
+
+def get_feature_annotations(x):
+    global feature_annotation
+
+    # Lipids
+    # # categories
+    lipids = ["P", "L", "PL", "C", "CE", "FC", "TG"]
+
+    # # size
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+
+    # # ...?
+    "VLDL",
+    "LDL",
+    "HDL",
+
+    # aminoacids
+    aas = [
+        "Ala",
+        "Gln",
+        "Gly",
+        "His",
+        "Total_BCAA",
+        "Ile",
+        "Leu",
+        "Val",
+        "Phe",
+        "Tyr",
+    ]
+
+    # Sugars
+    sugars = [
+        "Glucose",
+        "Lactate",
+        "Pyruvate",
+        "Citrate",
+        "bOHbutyrate",
+        "Acetate",
+        "Acetoacetate",
+        "Acetone",
+        "Creatinine",
+        "Albumin",
+        "GlycA",
+    ]
+
+    # Type of measurement/transformation
+    "_pct"
+
+    #
+    feature_annotation = pd.DataFrame(
+        dict(
+            lipid=x.columns.str.contains("|".join([f"_{x}" for x in lipids])),
+            # XS_lipid=x.columns.str.contains("|".join([f"_{x}" for x in lipids])),
+            aminocid=x.columns.str.contains("|".join(aas)),
+            sugars=x.columns.str.contains("|".join(sugars)),
+        ),
+        index=x.columns,
+    )
+    return feature_annotation
 
 
 def unsupervised(x, y, attributes: List[str] = []) -> None:
@@ -129,11 +242,14 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
         xticklabels=False,
         yticklabels=False,
     )
-    grid = clustermap(z_score(x).corr(), center=0, **kws)
+    grid = clustermap(
+        z_score(x).corr(), center=0, **kws, row_colors=feature_annotation
+    )
     grid.savefig(
         output_dir / f"unsupervised.correlation_variable.clustermap.svg",
         **figkws,
     )
+
     grid = clustermap(z_score(x).T.corr(), **kws, row_colors=y[attributes])
     grid.savefig(
         output_dir / f"unsupervised.correlation_samples.clustermap.svg",
@@ -148,8 +264,11 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
         (TSNE, dict(n_dims=1), dict()),
         (Isomap, dict(n_dims=1), dict()),
         (UMAP, dict(n_dims=1), dict(random_state=0)),
+        (DiffMap, dict(n_dims=1), dict()),
+        (PyMDE, dict(n_dims=1), dict()),
         (SpectralEmbedding, dict(n_dims=1), dict()),
     ][::-1]:
+        # model, pkwargs, mkwargs = (PyMDE, dict(), dict())
         name = str(model).split(".")[-1].split("'")[0]
         model_inst = model(**mkwargs)
 
@@ -168,6 +287,7 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
                 algo_name=name,
                 **pkwargs,
             )
+
             fig.savefig(
                 output_dir / f"unsupervised.dimres.{name}.{label}svg",
                 **figkws,
@@ -176,6 +296,9 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
 
 
 def get_explanatory_variables(x, y) -> None:
+    """
+    Find variables explaining the latent space discovered unsupervisedly.
+    """
 
     output_dir = (results_dir / "unsupervised").mkdir()
 
@@ -264,33 +387,374 @@ def get_explanatory_variables(x, y) -> None:
     )
 
 
-def supervised():
-    output_dir = (results_dir / "supervised").mkdir()
+def overlay_individuals_over_global(x, y) -> None:
+    """
+    Find variables explaining the latent space discovered unsupervisedly.
+    """
 
-    # first just get the stats
-    fig, stats = swarmboxenplot(
-        data=x.join(y),
-        x="WHO_classification",
-        y=x.columns,
-        swarm=False,
-        boxen=False,
+    """
+    TODO: idea:
+        Derive the vector field of the latent space(s):
+         - get sparse vector field based on observed patient movement
+            (x, y) <- coordinates of vector origin
+            (u, v) <- direction 
+         - plt.quiver(x, y, u, v)
+         - smooth or interpolate sparse field -> general field
+    """
+    from scipy.spatial.distance import euclidean, pdist, squareform
+    from scipy import interpolate
+
+    output_dir = (results_dir / "unsupervised").mkdir()
+
+    _joint_metrics = list()
+    for model, pkwargs, mkwargs in [
+        (PCA, dict(), dict()),
+        # (NMF, dict(), dict()),
+        (MDS, dict(n_dims=1), dict()),
+        (TSNE, dict(n_dims=1), dict()),
+        (Isomap, dict(n_dims=1), dict()),
+        (UMAP, dict(n_dims=1), dict(random_state=0)),
+        (DiffMap, dict(n_dims=1), dict()),
+        (PyMDE, dict(n_dims=1), dict()),
+        (SpectralEmbedding, dict(n_dims=1), dict()),
+    ][::-1]:
+        name = str(model).split(".")[-1].split("'")[0]
+        model_inst = model(**mkwargs)
+
+        res = (
+            pd.DataFrame(
+                model_inst.fit_transform(z_score(x))[:, :2],
+                index=x.index,
+                columns=["SE1", "SE2"],
+            )
+            * 1e3
+        )
+
+        dists = pd.DataFrame(
+            squareform(pdist(res)), index=res.index, columns=res.index
+        )
+
+        patient_timepoints = y.groupby("patient_code")["accession"].nunique()
+        patients = patient_timepoints[patient_timepoints > 1].index
+
+        # Metrics to calculate:
+        # # Total distance "run" over time
+        # # Overall direction (axis1 difference END - START)
+        _vector_field = list()
+        _metrics = list()
+        for patient in patients:
+            y2 = y.loc[y["patient_code"] == patient].sort_values(
+                ["date_sample"]
+            )
+            last = y2.iloc[-1].name
+            first = y2.iloc[0].name
+            # res.loc[y2.index].diff().abs().sum()
+
+            for s1, s2 in zip(y2.index[:-1], y2.index[1:]):
+                _vector_field.append(
+                    [*res.loc[s1]] + [*res.loc[s2] - res.loc[s1]]
+                )
+
+            _dists = pd.Series(np.diag(dists.loc[y2.index[:-1], y2.index[1:]]))
+
+            _metrics.append(
+                pd.Series(
+                    dict(
+                        # step_distance=res.loc[y2.index].diff(),
+                        # step_time=y2['date_sample'].diff(),
+                        n_timepoints=y2.shape[0],
+                        total_distance=_dists.sum(),
+                        dislocation=dists.loc[first, last],
+                        timedelta=y2.loc[last, "date_sample"]
+                        - y2.loc[first, "date_sample"],
+                    ),
+                    name=int(patient),
+                )
+            )
+        vf = np.asarray(_vector_field)
+
+        metrics = pd.DataFrame(_metrics)
+        metrics.index.name = "patient_code"
+        metrics["time_days"] = metrics["timedelta"].apply(lambda x: x.days)
+        metrics["velo"] = metrics["total_distance"].abs() / metrics["time_days"]
+        metrics["velo_dir"] = metrics["total_distance"] / metrics["time_days"]
+        _joint_metrics.append(metrics.assign(method=name))
+
+        # Plot
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        ax.scatter(*res.values.T, alpha=0.25, color="grey")
+
+        # # add lowess
+        fit = lowess(res["SE1"], res["SE2"])
+        ax.plot(*fit.T, color="black", linestyle="--")
+
+        colors = sns.color_palette("tab20", len(patients)) + sns.color_palette(
+            "Accent", len(patients)
+        )
+        for i, patient in enumerate(patients):
+            y2 = y.loc[y["patient_code"] == patient].sort_values(
+                ["date_sample"]
+            )
+
+            color = colors[i]
+            seve_color = palettes["WHO_score_sample"][
+                y2["WHO_score_sample"].cat.codes[0]
+            ]
+            outcome = y2["alive"].iloc[0]
+
+            v = res.loc[y2.index].values
+            ax.text(
+                *v[0],
+                s=f"P{str(patient).zfill(2)} - start",
+                color=color,
+                ha="center",
+                va="center",
+            )
+            ax.text(
+                *v[-1],
+                s=f"P{str(patient).zfill(2)} - end: {outcome}",
+                color=color,
+                ha="center",
+                va="center",
+            )
+            ax.scatter(*v[0], s=12, color=color)
+            ax.scatter(*v[-1], s=12, color=color, marker="^")
+            for l1, l2 in zip(v[:-1], v[1:]):
+                ax.annotate(
+                    "",
+                    xy=l2,
+                    xytext=l1,
+                    arrowprops=dict(arrowstyle="->", color=color),
+                )
+        fig.savefig(
+            output_dir
+            / f"unsupervised.{name}.patient_walk_in_space.scatter_arrow.svg",
+            **figkws,
+        )
+        plt.close(fig)
+
+        fig, axes = plt.subplots(1, 4, figsize=(4 * 4, 4))
+        axes[0].scatter(metrics["time_days"], metrics["total_distance"])
+        axes[0].set(xlabel="Course (days)", ylabel="Distance (abs)")
+
+        sns.swarmplot(x=metrics["velo_dir"], ax=axes[1])
+        axes[1].set(xlabel="Overall velocity (distance/day)")
+
+        axes[2].scatter(metrics["time_days"], metrics["dislocation"])
+        axes[2].set(
+            xlabel="Course (days)", ylabel="Total dislocation (end - start)"
+        )
+
+        v = metrics["total_distance"].max()
+        v -= v * 0.4
+        axes[3].scatter(
+            metrics["dislocation"],
+            metrics["total_distance"],
+            c=metrics["n_timepoints"],
+        )
+        axes[3].plot((-v, 0), (v, 0), linestyle="--", color="grey")
+        axes[3].plot((0, v), (0, v), linestyle="--", color="grey")
+        axes[3].set(xlabel="Total dislocation (end - start)", ylabel="Distance")
+        fig.savefig(
+            output_dir
+            / f"unsupervised.{name}.patient_walk_in_space.metrics.svg",
+            **figkws,
+        )
+        plt.close(fig)
+
+        # Reconstruct vector field
+        fig, axes = plt.subplots(1, 2, figsize=(2 * 6, 4))
+        axes[0].scatter(*res.values.T, alpha=0.25, color="grey")
+        axes[0].quiver(
+            *np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0]
+        )
+        axes[0].set(title="Original")
+        axes[1].set(title="Interpolated")
+
+        m = abs(vf[:, 0:2].max())
+        xx = np.linspace(-m, m, 100)
+        yy = np.linspace(-m, m, 100)
+        xx, yy = np.meshgrid(xx, yy)
+        u_interp = interpolate.griddata(
+            vf[:, 0:2], vf[:, 2], (xx, yy), method="cubic"
+        )
+        v_interp = interpolate.griddata(
+            vf[:, 0:2], vf[:, 3], (xx, yy), method="cubic"
+        )
+        axes[1].scatter(*res.values.T, alpha=0.25, color="grey")
+        axes[1].quiver(
+            *np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0]
+        )
+        axes[1].quiver(xx, yy, u_interp, v_interp)
+        axes[1].set(xlim=axes[0].get_xlim(), ylim=axes[0].get_ylim())
+        fig.savefig(
+            output_dir
+            / f"unsupervised.{name}.patient_walk_in_space.quiver.svg",
+            **figkws,
+        )
+        plt.close(fig)
+
+    # Consensus
+    joint_metrics = pd.concat(_joint_metrics)
+    joint_metrics.to_csv(
+        output_dir
+        / f"unsupervised.all_methods.patient_walk_in_space.metrics.csv"
     )
-    plt.close(fig)
 
-    # now plot top variables
-    fig, s2 = swarmboxenplot(
-        data=x.join(y),
-        x="WHO_classification",
-        y=stats.sort_values("p-unc")["Variable"].head(20).unique(),
-        plot_kws=dict(palette=palettes.get("WHO_classification")),
+    joint_metrics = pd.read_csv(
+        output_dir
+        / f"unsupervised.all_methods.patient_walk_in_space.metrics.csv",
+        index_col=0,
+    )
+    joint_metricsz = (
+        joint_metrics.groupby("method")[
+            ["total_distance", "dislocation", "velo", "velo_dir"]
+        ]
+        .apply(z_score)
+        .join(
+            joint_metrics.groupby(level=0)[["n_timepoints", "time_days"]].apply(
+                np.mean
+            )
+        )
+        .groupby(level=0)
+        .mean()
+    )
+
+    fig, axes = plt.subplots(1, 4, figsize=(4 * 4, 4))
+    axes[0].scatter(
+        joint_metricsz["time_days"],
+        joint_metricsz["total_distance"],
+        c=joint_metricsz["n_timepoints"],
+    )
+    axes[0].set(xlabel="Course (days)", ylabel="Distance (Z-score, abs)")
+
+    axes[1].scatter(
+        np.random.random(joint_metricsz.shape[0]) / 10,
+        joint_metricsz["velo_dir"],
+        c=joint_metricsz["n_timepoints"],
+    )
+    # sns.swarmplot(x=joint_metricsz["velo_dir"], ax=axes[1])
+    axes[1].set(ylabel="Overall velocity (distance/day)", xlim=(-1, 1))
+
+    axes[2].scatter(
+        joint_metricsz["time_days"],
+        joint_metricsz["dislocation"],
+        c=joint_metricsz["n_timepoints"],
+    )
+    axes[2].set(
+        xlabel="Course (days)",
+        ylabel="Total dislocation (Z-score, end - start)",
+    )
+
+    v = joint_metricsz["total_distance"].max()
+    v -= v * 0.4
+    axes[3].scatter(
+        joint_metricsz["dislocation"],
+        joint_metricsz["total_distance"],
+        c=joint_metricsz["n_timepoints"],
+    )
+    axes[3].plot((-v, v), (-v, v), linestyle="--", color="grey")
+    axes[3].set(
+        xlabel="Total dislocation (Z-score, end - start)",
+        ylabel="Distance (Z-score)",
     )
     fig.savefig(
-        output_dir / "supervised.top_differential.swarmboxenplot.svg",
+        output_dir
+        / f"unsupervised.mean_methods.patient_walk_in_space.metrics.svg",
         **figkws,
     )
 
+    # See what velocity is related with
+    import pingouin as pg
 
-def _plot_projection(x_df, y_df, factors, n_dims=4, algo_name="PCA"):
+    _stats = list()
+    for attribute in [a for a in attributes if a in palettes]:
+        df = (
+            joint_metricsz.join(y.set_index("patient_code")[[attribute]])
+            .dropna()
+            .drop_duplicates()
+        )
+
+        fig, _ = swarmboxenplot(data=df, x=attribute, y="velo")
+        fig.savefig(
+            output_dir
+            / f"unsupervised.mean_methods.patient_walk_in_space.velocity_vs_{attribute}.svg",
+            **figkws,
+        )
+
+        if (
+            pg.homoscedasticity(data=df, dv="velo", group=attribute)[
+                "equal_var"
+            ].squeeze()
+            != True
+        ):
+            continue
+        if (
+            pg.anova(data=df, dv="velo", between=attribute)["p-unc"].squeeze()
+            >= 0.05
+        ):
+            # continue
+            pass
+        _stats.append(
+            pg.pairwise_tukey(data=df, dv="velo", between=attribute).assign(
+                attribute=attribute
+            )
+        )
+
+    stats = pd.concat(_stats)
+    stats.pivot_table(index="A", columns="B", values="hedges")
+    stats.pivot_table(index="A", columns="B", values="diff")
+
+    stats = stats.query("attribute == 'WHO_score_patient'")
+
+
+def supervised(x, y, attributes, plot_all: bool = True) -> None:
+    output_dir = (results_dir / "supervised").mkdir()
+
+    for attribute in attributes:
+        # first just get the stats
+        fig, stats = swarmboxenplot(
+            data=x.join(y),
+            x=attribute,
+            y=x.columns,
+            swarm=False,
+            boxen=False,
+        )
+        plt.close(fig)
+        stats.to_csv(
+            output_dir / f"supervised.{attribute}.all_variables.stats.csv",
+            index=False,
+        )
+
+        if plot_all:
+            fig, stats = swarmboxenplot(
+                data=x.join(y),
+                x=attribute,
+                y=x.columns,
+            )
+            fig.savefig(
+                output_dir
+                / f"supervised.{attribute}.all_variables.swarmboxenplot.svg",
+                **figkws,
+            )
+
+        # now plot top variables
+        fig, s2 = swarmboxenplot(
+            data=x.join(y),
+            x=attribute,
+            y=stats.sort_values("p-unc")["Variable"].head(20).unique(),
+            plot_kws=dict(palette=palettes.get(attribute)),
+        )
+        fig.savefig(
+            output_dir
+            / f"supervised.{attribute}.top_differential.swarmboxenplot.svg",
+            **figkws,
+        )
+
+
+def _plot_projection(
+    x_df, y_df, factors, n_dims=4, algo_name="PCA", fit_lowess: bool = False
+):
     from seaborn_extensions.annotated_clustermap import to_color_series  # type: ignore[import]
     from seaborn_extensions.annotated_clustermap import is_numeric
 
@@ -315,12 +779,17 @@ def _plot_projection(x_df, y_df, factors, n_dims=4, algo_name="PCA"):
         except AttributeError:  # not a categorical
             try:
                 colors = to_color_series(
-                    y_df[factor].dropna(), palettes.get(cat)
+                    y_df[factor].dropna(), palettes.get(factor)
                 )
             except (TypeError, ValueError):
                 colors = to_color_series(y_df[factor].dropna())
         for pc in x_df.columns[:n_dims]:
             ax = axes[i, pc]
+
+            if fit_lowess:
+                fit = lowess(x_df.loc[:, pc], x_df.loc[:, pc + 1], frac=1.0)
+                ax.plot(*fit.T, color="grey", linestyle="--")
+
             if numeric:
                 m = ax.scatter(
                     x_df.loc[:, pc],
@@ -355,6 +824,30 @@ def _plot_projection(x_df, y_df, factors, n_dims=4, algo_name="PCA"):
     for i, ax in enumerate(axes[-1, :]):
         ax.set_xlabel(algo_name + str(i + 1))
     return fig
+
+
+class PyMDE:
+    import pymde
+
+    def fit_transform(self, x, embedding_dim=2, **kwargs):
+        if isinstance(x, pd.DataFrame):
+            x = x.values
+        embedding = (
+            pymde.preserve_neighbors(x, embedding_dim=embedding_dim, **kwargs)
+            .embed()
+            .numpy()
+        )
+        return embedding
+
+
+class DiffMap:
+    from anndata import AnnData
+
+    def fit_transform(self, x, embedding_dim=2, **kwargs):
+        a = AnnData(x)
+        sc.pp.neighbors(a, use_rep="X")
+        sc.tl.diffmap(a)
+        return a.obsm["X_diffmap"][:, 1:3]
 
 
 if __name__ == "__main__":

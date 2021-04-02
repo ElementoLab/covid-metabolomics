@@ -14,3 +14,6 @@
  - Unsupervised analysis:
    - Spectral embedding works well, similar to LSA paper
  - Supervised analysis seems to recover several associations with progression/severity and even some specific to some groups e.g. 'severe' patients.
+
+## 2021/04/01
+ - Exploration of patient speed of motion through latent spaces
