@@ -8,6 +8,7 @@ import sys, io, argparse
 from typing import Sequence, Tuple
 from functools import partial
 
+from tqdm import tqdm
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 import sklearn  # type: ignore
@@ -16,51 +17,19 @@ import seaborn as sns  # type: ignore
 from sklearn.decomposition import PCA, NMF  # type: ignore
 from sklearn.manifold import MDS, Isomap, TSNE, SpectralEmbedding  # type: ignore
 from umap import UMAP  # type: ignore
+import scipy
+import pingouin as pg  # type: ignore
 import statsmodels.api as sm  # type: ignore
 import statsmodels.formula.api as smf  # type: ignore
 import pymde  # type: ignore
-from statsmodels.nonparametric.smoothers_lowess import lowess
+from statsmodels.nonparametric.smoothers_lowess import lowess  # type: ignore
 
 from imc.types import Path, DataFrame  # type: ignore
-from seaborn_extensions import clustermap, swarmboxenplot  # type: ignore
 from imc.utils import z_score  # type: ignore[import]
+from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot  # type: ignore
 
-figkws = dict(dpi=300, bbox_inches="tight")
+from src.config import *
 
-metadata_dir = Path("metadata")
-data_dir = Path("data")
-results_dir = Path("results")
-
-X_FILE = data_dir / "assay_data.csv"
-Y_FILE = data_dir / "metadata.csv"
-
-
-attributes = [
-    "race",
-    "age",
-    "sex",
-    "obesity",
-    "bmi",
-    "hospitalized",
-    "patient_group",
-    "WHO_score_sample",
-    "WHO_score_patient",
-    "alive",
-]
-
-palettes = dict(
-    race=sns.color_palette("tab10"),
-    sex=sns.color_palette("Pastel1")[3:5],
-    obesity=sns.color_palette("tab10")[3:6][::-1],
-    hospitalized=sns.color_palette("Set2")[:2],
-    patient_group=np.asarray(sns.color_palette("Set1"))[
-        [2, 1, 7, 3, 0]
-    ].tolist(),
-    WHO_score_sample=sns.color_palette("inferno", 9),
-    WHO_score_patient=sns.color_palette("inferno", 9),
-    alive=sns.color_palette("Dark2")[:2],
-)
-cmaps = dict(age="winter_r", bmi="copper")
 
 cli = None
 
@@ -295,6 +264,21 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
             plt.close(fig)
 
 
+def diffusion(x, y) -> None:
+    from anndata import AnnData
+    import scanpy as sc
+
+    a = AnnData(x, obs=y)
+    sc.pp.scale(a)
+    sc.pp.neighbors(a, use_rep="X")
+    sc.tl.diffmap(a)
+    a.uns["iroot"] = np.flatnonzero(a.obs["WHO_score_patient"] == 0)[0]
+    sc.tl.dpt(a)
+    # fix for https://github.com/theislab/scanpy/issues/409:
+    a.obs["dpt_order_indices"] = a.obs["dpt_pseudotime"].argsort()
+    a.uns["dpt_changepoints"] = np.ones(a.obs["dpt_order_indices"].shape[0] - 1)
+
+
 def get_explanatory_variables(x, y) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.
@@ -369,8 +353,15 @@ def get_explanatory_variables(x, y) -> None:
 
     sample_order = res.sort_values("SE1").index
     var_order = coefs2.sort_values("SE1").index
+    lx = z_score(x).loc[sample_order, var_order]
+    # # apply some smoothing
+    lxs = pd.DataFrame(
+        scipy.ndimage.gaussian_filter(lx, 3, mode="mirror"),
+        lx.index,
+        lx.columns,
+    )
     grid = clustermap(
-        z_score(x).loc[sample_order, var_order],
+        lxs,
         col_cluster=False,
         row_cluster=False,
         center=0,
@@ -665,8 +656,6 @@ def overlay_individuals_over_global(x, y) -> None:
     )
 
     # See what velocity is related with
-    import pingouin as pg
-
     _stats = list()
     for attribute in [a for a in attributes if a in palettes]:
         df = (
@@ -709,6 +698,8 @@ def overlay_individuals_over_global(x, y) -> None:
 
 
 def supervised(x, y, attributes, plot_all: bool = True) -> None:
+    import statsmodels.formula.api as smf
+
     output_dir = (results_dir / "supervised").mkdir()
 
     for attribute in attributes:
@@ -748,6 +739,224 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         fig.savefig(
             output_dir
             / f"supervised.{attribute}.top_differential.swarmboxenplot.svg",
+            **figkws,
+        )
+
+    # Use also a MLM and compare to GLM
+    attrs = [
+        "race",
+        "age",
+        "sex",
+        "obesity",
+        "bmi",
+        "hospitalized",
+        "patient_group",
+        "alive",
+    ]
+    for attribute in attrs:
+        stats_f = output_dir / f"supervised.{attribute}.model_fits.csv"
+
+        if not stats_f.exists():
+            # # Mixed effect
+            data = (
+                z_score(x)
+                .join(y)
+                .dropna(subset=[attribute, "WHO_score_sample"])
+            )
+            data["WHO_score_sample"] = data["WHO_score_sample"].cat.codes
+            _res_mlm = list()
+            for feat in tqdm(x.columns):
+                mdf = smf.mixedlm(
+                    f"{feat} ~ {attribute} * WHO_score_sample",
+                    data,
+                    groups=data["patient_code"],
+                ).fit()
+                res = (
+                    mdf.params.to_frame("coefs")
+                    .join(mdf.pvalues.rename("pvalues"))
+                    .assign(feature=feat)
+                )
+                res = res.loc[res.index.str.contains(attribute)]
+                _res_mlm.append(res)
+            res_mlm = pd.concat(_res_mlm)
+            # res_mlm['qvalues'] = pg.multicomp(res_mlm['pvalues'].values, method="fdr_bh")[1]
+            # res_mlm.loc[res_mlm.index.str.contains(":")].sort_values("pvalues")
+
+            # # GLM
+            _res_glm = list()
+            for feat in tqdm(x.columns):
+                mdf = smf.glm(
+                    f"{feat} ~ {attribute} + WHO_score_sample", data
+                ).fit()
+                res = (
+                    mdf.params.to_frame("coefs")
+                    .join(mdf.pvalues.rename("pvalues"))
+                    .assign(feature=feat)
+                )
+                res = res.loc[res.index.str.contains(attribute)]
+                _res_glm.append(res)
+            res_glm = pd.concat(_res_glm)
+
+            res = pd.concat(
+                [res_mlm.assign(model="mlm"), res_glm.assign(model="glm")]
+            )
+            res.to_csv(stats_f)
+
+    all_stats = pd.concat(
+        [
+            pd.read_csv(
+                output_dir / f"supervised.{attribute}.model_fits.csv",
+                index_col=0,
+            ).assign(attribute=attribute)
+            for attribute in attrs
+        ]
+    )
+
+    coef_mat = all_stats.reset_index().pivot_table(
+        index="feature", columns="index", values="coefs"
+    )
+
+    grid = clustermap(
+        coef_mat, config="abs", cmap="RdBu_r", center=0, xticklabels=True
+    )
+
+    for attribute in attrs:
+        stats_f = output_dir / f"supervised.{attribute}.model_fits.csv"
+        res = pd.read_csv(stats_f, index_col=0)
+
+        res_glm = res.query("model == 'glm'")
+        res_mlm = res.query("model == 'mlm'")
+
+        cglm = res_glm.set_index("feature")["coefs"].rename("GLM")
+        cmlm = res_mlm.set_index("feature")["coefs"].rename("MLM")
+        c = cglm.to_frame().join(cmlm)
+        pglm = res_glm.set_index("feature")["pvalues"].rename("GLM")
+        pmlm = res_mlm.set_index("feature")["pvalues"].rename("MLM")
+        p = pglm.to_frame().join(pmlm)
+        q = p.copy()
+        for col in q:
+            q[col] = pg.multicomp(q[col].values, method="fdr_bh")[1]
+
+        v = c.abs().max()
+        v += v * 0.1
+
+        fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+        ax.plot((-v, v), (-v, v), linestyle="--", color="grey", zorder=-2)
+        ax.scatter(
+            c["GLM"],
+            c["MLM"],
+            c=p.mean(1),
+            cmap="Reds_r",
+            vmin=0,
+            vmax=1.5,
+            s=5,
+            alpha=0.5,
+        )
+        ax.set(
+            title=attribute,
+            xlabel=r"$\beta$   (GLM)",
+            ylabel=r"$\beta$   (MLM)",
+        )
+        fig.savefig(
+            output_dir
+            / f"supervised.{attribute}.General_vs_Mixed_effect_model_comparison.scatter.svg",
+            **figkws,
+        )
+
+        # now plot top variables
+        if y[attribute].dtype.name in ["object", "category"]:
+            fig = swarmboxenplot(
+                data=x.join(y),
+                x=attribute,
+                y=res_mlm.sort_values("pvalues").head(20)["feature"],
+                plot_kws=dict(palette=palettes.get(attribute)),
+                test=False,
+            )
+            fig.savefig(
+                output_dir
+                / f"supervised.{attribute}.top_differential-Mixed_effect_models.swarmboxenplot.svg",
+                **figkws,
+            )
+        else:
+            from imc.graphics import get_grid_dims
+
+            feats = res_mlm.sort_values("pvalues").head(20)["feature"].tolist()
+            fig = get_grid_dims(feats, return_fig=True, sharex=True)
+            for feat, ax in zip(feats, fig.axes):
+                sns.regplot(data=x.join(y), x=attribute, y=feat, ax=ax)
+                ax.set(
+                    title=feat + f"; FDR = {p.loc[feat, 'MLM']:.2e}",
+                    ylabel=None,
+                )
+            fig.savefig(
+                output_dir
+                / f"supervised.{attribute}.top_differential-Mixed_effect_models.regplot.svg",
+                **figkws,
+            )
+
+        # Plot volcano
+        data = res_mlm.rename(
+            columns={
+                "feature": "Variable",
+                "coefs": "hedges",
+                "pvalues": "p-unc",
+            }
+        ).assign(A="A", B="B")
+        data["p-cor"] = pg.multicomp(data["p-unc"].values, method="fdr_bh")[1]
+        fig = volcano_plot(stats=data.reset_index(drop=True))
+        fig.savefig(
+            output_dir
+            / f"supervised.{attribute}.Mixed_effect_models.volcano_plot.svg",
+            **figkws,
+        )
+
+        # Plot heatmap of differential only
+        # # TODO: for multiclass attributes (e.g. race need to disentangle)
+        f = c.abs().sort_values("MLM").tail(50).index.drop_duplicates()
+        f = c.loc[f].sort_values("MLM").index.drop_duplicates()
+        stats = (
+            (-np.log10(p["MLM"].to_frame("-log10(p-value)")))
+            .join(c["MLM"].rename("Coefficient"))
+            .join((q["MLM"] < 0.05).to_frame("Significant"))
+            .groupby(level=0)
+            .mean()
+        )
+
+        so = score_signature(x, diff=stats["Coefficient"]).sort_values()
+
+        grid = clustermap(
+            x.loc[so.index, f],
+            config="z",
+            row_colors=y[attribute].to_frame().join(so),
+            col_colors=stats,
+            yticklabels=False,
+            cbar_kws=dict(label="Z-score"),
+        )
+        grid.ax_heatmap.set(
+            xlabel=f"Features (top 50 features for '{attribute}'"
+        )
+        grid.fig.savefig(
+            output_dir
+            / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.svg",
+            **figkws,
+        )
+
+        grid = clustermap(
+            x.loc[so.index, f],
+            row_cluster=False,
+            col_cluster=False,
+            config="z",
+            row_colors=y[attribute].to_frame().join(so),
+            col_colors=stats,
+            yticklabels=False,
+            cbar_kws=dict(label="Z-score"),
+        )
+        grid.ax_heatmap.set(
+            xlabel=f"Features (top 50 features for '{attribute}'"
+        )
+        grid.fig.savefig(
+            output_dir
+            / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.sorted.svg",
             **figkws,
         )
 
@@ -826,28 +1035,43 @@ def _plot_projection(
     return fig
 
 
-class PyMDE:
-    import pymde
+import pandas as pd
 
-    def fit_transform(self, x, embedding_dim=2, **kwargs):
-        if isinstance(x, pd.DataFrame):
-            x = x.values
-        embedding = (
-            pymde.preserve_neighbors(x, embedding_dim=embedding_dim, **kwargs)
-            .embed()
-            .numpy()
-        )
-        return embedding
+from imc.types import Series, DataFrame
+from imc.utils import z_score
 
 
-class DiffMap:
-    from anndata import AnnData
+def score_signature(x: DataFrame, diff: Series):
+    """
+    Score samples based on signature.
+    """
+    # Standardize and center
+    xz = z_score(x)
 
-    def fit_transform(self, x, embedding_dim=2, **kwargs):
-        a = AnnData(x)
-        sc.pp.neighbors(a, use_rep="X")
-        sc.tl.diffmap(a)
-        return a.obsm["X_diffmap"][:, 1:3]
+    # Separate up/down genes
+    if diff.dtype.name in ["categorical", "object"]:
+        raise NotImplementedError
+        # 1.1 get vectors for up- and down regulated genes
+        cond1, cond2 = diff.drop_duplicates()
+        u1 = xz.loc[:, xz.columns.str.startswith(cond1)].mean(axis=1)
+        u2 = xz.loc[:, xz.columns.str.startswith(cond2)].mean(axis=1)
+        extremes = pd.DataFrame([u1, u2], index=[cond1, cond2]).T
+        up = extremes[extremes[cond1] > extremes[cond2]].index
+        down = extremes[extremes[cond1] < extremes[cond2]].index
+    else:
+        up = diff[diff > 0].index
+        down = diff[diff < 0].index
+
+    # 1.2 Make score
+    # get sum/mean intensities in either
+    # weighted by each side contribution to the signature
+    # sum the value of each side
+    n = xz.shape[1]
+    scores = (
+        -(xz[up].mean(axis=1) * (float(up.size) / n))
+        + (xz[down].mean(axis=1) * (float(down.size) / n))
+    ).rename("signature_score")
+    return scores
 
 
 if __name__ == "__main__":

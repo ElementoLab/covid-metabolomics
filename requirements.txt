@@ -2,9 +2,11 @@ pandas
 sklearn
 umap
 statsmodels
+pingouin
 numpy
 seaborn
 matplotlib
+pymde
+
 git+https://github.com/ElementoLab/imc.git
 git+https://github.com/afrendeiro/seaborn_extensions.git
-pymde

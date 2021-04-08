@@ -4,6 +4,16 @@
 "DL_" features are lipoproteins.
 
 
+lipoprotein abbreviations:
+ - FC: free cholesterol
+ - CE: esterified cholesterol
+ - PL: phospholipids
+
+ - VLDL: very low density lipoproteins
+ - LDL: low density lipoproteins
+ - HDL: high density lipoproteins
+ - VHDL: very high density lipoproteins
+
 
 ## 2021/02/28
  - Got data from Jan Krumsiek as SummarizedExperiment
