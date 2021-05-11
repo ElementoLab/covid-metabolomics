@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-Analysis of Olink data from COVID-19 patients.
+Analysis of NMR data of metabolites from blood serum of COVID-19 patients.
 """
 
 import sys, io, argparse
@@ -33,6 +33,7 @@ cli = None
 
 
 def main(cli: tp.Sequence[str] = None) -> int:
+    """The main function to run the analysis."""
     args = get_parser().parse_args(cli)
 
     x1, y1 = get_x_y_nmr()
@@ -44,6 +45,13 @@ def main(cli: tp.Sequence[str] = None) -> int:
     overlay_individuals_over_global(x1, y1)
 
     supervised(x1, y1, [a for a in attributes if a in palettes])
+
+    # Investigate NMR features
+    # # Feature-feature relationships and their classes
+    get_feature_network(x1, y1)
+    feature_properties_change(x1)
+    # TODO:
+    feature_properties_pseudotime(x1)
 
     # Flow cytometry
     x2, y2 = get_x_y_flow()
@@ -411,7 +419,7 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
         "XXL": "Extra extra large",
     }
 
-    fatty_acids = [
+    fattyacids = [
         "Omega_3",
         "Omega_6",
         "SFA",  # Saturated fatty acids
@@ -470,7 +478,7 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
     #
     annot = pd.DataFrame(
         dict(
-            fatty_acids=x.columns.str.contains("|".join(fatty_acids)),
+            fattyacids=x.columns.str.contains("|".join(fattyacids)),
             aminoacid=x.columns.str.contains("|".join(aminoacids)),
             acids=x.columns.str.contains("|".join(acids)),
             proteins=x.columns.str.contains("|".join(proteins)),
@@ -483,24 +491,36 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
     ).rename_axis(index="feature")
 
     for lp_type in lipoproteins:
-        annot["lipoproteins_" + lp_type] = x.columns.str.endswith(
+        annot["lipoprotein_" + lp_type] = x.columns.str.endswith(
             "_" + lp_type
         ) | x.columns.str.endswith("_" + lp_type + "_pct")
 
     for density in densities:
-        annot["lipoproteins_density_" + density] = x.columns.str.contains(
+        annot["lipoprotein_density_" + density] = x.columns.str.contains(
             density + "_"
         ) & (~x.columns.str.contains("non"))
+
     for size in sizes:
-        annot["lipoproteins_size_" + size] = x.columns.str.contains(
+        annot["lipoprotein_size_" + size] = x.columns.str.contains(
             "DL_"
         ) & x.columns.str.startswith(size + "_")
 
+    # fix VLDL/LDL mix
     annot.loc[
-        annot["lipoproteins_density_VLDL"] == True, "lipoproteins_density_LDL"
+        annot["lipoprotein_density_VLDL"] == True, "lipoprotein_density_LDL"
     ] = False
 
+    # add numeric rank of size/density
+    annot["size"] = np.nan
+    for i, size in enumerate(sizes, 1):
+        annot.loc[annot["lipoprotein_size_" + size] == True, "size"] = i
+    annot["density"] = np.nan
+    for i, density in enumerate(densities, 1):
+        annot.loc[annot["lipoprotein_density_" + density] == True, "density"] = i
+
     annot["Ratio to total"] = annot.index.str.endswith("_pct")
+
+    # annot.to_csv(metadata_dir / "annot.csv")
 
     return annot
 
@@ -638,7 +658,7 @@ def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
 
 
 def get_feature_network(
-    x: DataFrame, data_type: str = "NMR", method: str = "knn"
+    x: DataFrame, y: DataFrame, data_type: str = "NMR", method: str = "knn"
 ) -> DataFrame:
     import networkx as nx
     import scanpy as sc
@@ -669,32 +689,80 @@ def get_feature_network(
     # grid = clustermap(corr, metric="euclidean", cmap="RdBu_r", center=0)
 
     # With scanpy
-
     annot = get_feature_annotations(x, data_type)
 
     xx = z_score(x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1))
 
-    annott = annot.loc[xx.columns].astype(int)
+    annott = annot.loc[xx.columns].fillna(-1).astype(int)
     annott = annott.loc[:, annott.nunique() > 1]
-    a = AnnData(xx.T, obs=annott)
-    sc.pp.neighbors(a, use_rep="X")
+    annott = annott.loc[:, ~annott.columns.str.contains("_")]
+
+    stats = pd.read_csv(
+        results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
+    )
+    change = stats.set_index("Variable")["hedges_g"].rename("alive") * -1
+
+    a = AnnData(xx.T, obs=annott.join(change))
+    sc.pp.neighbors(a, n_neighbors=15, use_rep="X")
     sc.tl.umap(a)
     sc.tl.leiden(a)
 
-    feats = annott.columns.tolist() + ["leiden"]
+    feats = annott.columns.tolist() + ["leiden", "alive"]
     fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
-    for ax, feat in zip(fig.axes, feats):
-        sc.pl.umap(a, color=feat, edges=True, ax=ax, show=False, s=50, alpha=0.5)
+    cmaps = ["viridis"] * 6 + ["inferno"] * 2 + ["tab10"] + ["coolwarm"]
+    for ax, feat, cmap in zip(fig.axes, feats, cmaps):
+        sc.pl.umap(
+            a, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
+        )
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
     rasterize_scanpy(fig)
     fig.savefig(output_dir / "feature_annotation.network.scanpy.svg", **figkws)
 
+    # Plot one with complete feature annotations
+    _a = AnnData(xx.T, obs=annot.loc[xx.columns].fillna(-1).astype(int).join(change))
+    sc.pp.neighbors(_a, n_neighbors=15, use_rep="X")
+    sc.tl.umap(_a)
+    sc.tl.leiden(_a)
+    feats = annot.columns.tolist() + ["leiden", "alive"]
+    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
+    cmaps = ["viridis"] * annot.shape[1] + ["tab10"] + ["coolwarm"]
+    for ax, feat, cmap in zip(fig.axes, feats, cmaps):
+        sc.pl.umap(
+            _a, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
+        )
+    for ax in fig.axes:
+        ax.set(xlabel="", ylabel="")
+    rasterize_scanpy(fig)
+    fig.savefig(
+        output_dir / "feature_annotation.network.scanpy.full_feature_annotation.svg",
+        **figkws,
+    )
+
+    # Visualize as heatmaps as well
+    corr = z_score(xx)
+    grid = clustermap(
+        corr,
+        metric="cosine",
+        cmap="coolwarm",
+        center=0,
+        row_colors=y[attributes],
+        col_colors=annott.join(a.obs["leiden"]),
+        rasterized=True,
+        robust=True,
+    )
+    ax = grid.ax_heatmap
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
+    ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
+    grid.savefig(
+        output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws
+    )
+
     corr = z_score(xx).corr()
     grid = clustermap(
         corr,
         metric="euclidean",
-        cmap="RdBu_r",
+        cmap="coolwarm",
         center=0,
         row_colors=a.obs["leiden"],
         rasterized=True,
@@ -703,7 +771,200 @@ def get_feature_network(
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
     ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
     grid.savefig(
-        output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws
+        output_dir / "feature_annotation.network.scanpy.clustermap.symmetric.svg",
+        **figkws,
+    )
+
+    # Check the same on steady state only
+    annot = get_feature_annotations(x, data_type)
+    xx = z_score(x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1))
+    xx = xx.loc[y.query("group == 'control'").index]
+    annott = annot.loc[xx.columns].fillna(-1).astype(int)
+    annott = annott.loc[:, annott.nunique() > 1]
+    annott = annott.loc[:, ~annott.columns.str.contains("_")]
+
+    an = AnnData(xx.T, obs=annott.join(change))
+    sc.pp.neighbors(an, n_neighbors=15, use_rep="X")
+    sc.tl.umap(an)
+    sc.tl.leiden(an)
+
+    feats = annott.columns.tolist() + ["leiden", "alive"]
+    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
+    cmaps = ["viridis"] * 6 + ["inferno"] * 2 + ["tab10"] + ["coolwarm"]
+    for ax, feat, cmap in zip(fig.axes, feats, cmaps):
+        sc.pl.umap(
+            an, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
+        )
+    for ax in fig.axes:
+        ax.set(xlabel="", ylabel="")
+    rasterize_scanpy(fig)
+    fig.savefig(
+        output_dir / "feature_annotation.only_healthy.network.scanpy.svg", **figkws
+    )
+
+    corr = z_score(xx)
+    grid = clustermap(
+        corr,
+        metric="cosine",
+        cmap="coolwarm",
+        center=0,
+        col_colors=an.obs["leiden"],
+        rasterized=True,
+    )
+    ax = grid.ax_heatmap
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
+    ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
+    grid.savefig(
+        output_dir / "feature_annotation.only_healthy.network.scanpy.clustermap.svg",
+        **figkws,
+    )
+
+    corr = z_score(xx).corr()
+    grid = clustermap(
+        corr,
+        metric="euclidean",
+        cmap="coolwarm",
+        center=0,
+        row_colors=an.obs["leiden"],
+        rasterized=True,
+    )
+    ax = grid.ax_heatmap
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
+    ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
+    grid.savefig(
+        output_dir
+        / "feature_annotation.only_healthy.network.scanpy.clustermap.symmetric.svg",
+        **figkws,
+    )
+
+    #
+
+    # Make one visualization with all info condensed in one figure axis
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.scatter
+    # TODO:
+
+    #
+
+
+def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
+    """
+    See relationship between feature properties and change with disease.
+    """
+    output_dir = (results_dir / "feature_network").mkdir()
+
+    # Collect fold-changes
+    _changes = list()
+    for attr in ["hospitalized", "alive", "patient_group"]:
+        stats = pd.read_csv(
+            results_dir / "supervised" / f"supervised.{attr}.all_variables.stats.csv",
+        )
+        stats["A"] = stats["A"].astype(str)
+        stats["B"] = stats["B"].astype(str)
+        _v = "hedges" if "hedges" in stats.columns else "hedges_g"
+
+        for _, (a, b) in stats[["A", "B"]].drop_duplicates().iterrows():
+            change = (
+                stats.query(f"A == '{a}' & B == '{b}'")
+                .set_index("Variable")[_v]
+                .rename(f"{attr}: {b}-{a}")
+                * -1
+            )
+            _changes.append(change)
+    changes = pd.concat(_changes, 1)
+
+    # Visualize all fold-changes
+    grid = clustermap(changes, xticklabels=True, cmap="coolwarm", center=0)
+    grid.savefig(
+        output_dir / "disease_change.all_variables.clustermap.svg",
+        **figkws,
+    )
+
+    annot = get_feature_annotations(x, data_type)
+    data = annot[["size", "density"]].astype(pd.CategoricalDtype(ordered=True))
+
+    rows = ["size", "density"]
+    cols = changes.columns
+    n, m = (
+        len(rows),
+        len(cols),
+    )
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), sharex="row", sharey="row")
+    for i, row in enumerate(rows):
+        for j, col in enumerate(cols):
+            s = swarmboxenplot(
+                data=data.join(changes),
+                x=row,
+                y=col,
+                ax=axes[i, j],
+                plot_kws=dict(palette="inferno"),
+            )
+            axes[i, j].axhline(0, linestyle="--", color="grey")
+            axes[i, j].set(title=col, ylabel="log fold-change")
+    fig.savefig(
+        output_dir / "disease_change.dependent_on_feature_properties.swarmboxenplot.svg",
+        **figkws,
+    )
+
+
+def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
+    """
+    See relationship between feature properties and pseudotime.
+    """
+    raise NotImplementedError
+    output_dir = (results_dir / "feature_network").mkdir()
+
+    # Collect fold-changes
+    _changes = list()
+    for attr in ["hospitalized", "alive", "patient_group"]:
+        stats = pd.read_csv(
+            results_dir / "supervised" / f"supervised.{attr}.all_variables.stats.csv",
+        )
+        stats["A"] = stats["A"].astype(str)
+        stats["B"] = stats["B"].astype(str)
+        _v = "hedges" if "hedges" in stats.columns else "hedges_g"
+
+        for _, (a, b) in stats[["A", "B"]].drop_duplicates().iterrows():
+            change = (
+                stats.query(f"A == '{a}' & B == '{b}'")
+                .set_index("Variable")[_v]
+                .rename(f"{attr}: {b}-{a}")
+                * -1
+            )
+            _changes.append(change)
+    changes = pd.concat(_changes, 1)
+
+    # Visualize all fold-changes
+    grid = clustermap(changes, xticklabels=True, cmap="coolwarm", center=0)
+    grid.savefig(
+        output_dir / "disease_change.all_variables.clustermap.svg",
+        **figkws,
+    )
+
+    annot = get_feature_annotations(x, data_type)
+    data = annot[["size", "density"]].astype(pd.CategoricalDtype(ordered=True))
+
+    rows = ["size", "density"]
+    cols = changes.columns
+    n, m = (
+        len(rows),
+        len(cols),
+    )
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), sharex="row", sharey="row")
+    for i, row in enumerate(rows):
+        for j, col in enumerate(cols):
+            s = swarmboxenplot(
+                data=data.join(changes),
+                x=row,
+                y=col,
+                ax=axes[i, j],
+                plot_kws=dict(palette="inferno"),
+            )
+            axes[i, j].axhline(0, linestyle="--", color="grey")
+            axes[i, j].set(title=col, ylabel="log fold-change")
+    fig.savefig(
+        output_dir / "disease_change.dependent_on_feature_properties.swarmboxenplot.svg",
+        **figkws,
     )
 
 
