@@ -402,7 +402,7 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
 
     densities = {"VLDL": "Very low", "LDL": "Low", "IDL": "Intermediate", "HDL": "Heavy"}
     sizes = {
-        "XXS": "Extra extra small",
+        # "XXS": "Extra extra small",
         "XS": "Extra small",
         "S": "Small",
         "M": "Medium",
@@ -468,31 +468,41 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
     }
 
     #
-    feature_annotation = pd.DataFrame(
+    annot = pd.DataFrame(
         dict(
-            lipoproteins=x.columns.str.contains(
-                "|".join([f"_{x}" for x in lipoproteins])
-            ),
             fatty_acids=x.columns.str.contains("|".join(fatty_acids)),
-            aminocid=x.columns.str.contains("|".join(aminoacids)),
+            aminoacid=x.columns.str.contains("|".join(aminoacids)),
             acids=x.columns.str.contains("|".join(acids)),
             proteins=x.columns.str.contains("|".join(proteins)),
             sugars=x.columns.str.contains("|".join(sugars)),
+            lipoproteins=x.columns.str.contains(
+                "|".join([f"_{x}" for x in lipoproteins])
+            ),
         ),
         index=x.columns,
-    )
+    ).rename_axis(index="feature")
+
     for lp_type in lipoproteins:
-        feature_annotation["lipoproteins_" + lp_type] = x.columns.str.contains(
-            "|".join([f"_{x}" for x in lipoproteins[lp_type]])
-        )
+        annot["lipoproteins_" + lp_type] = x.columns.str.endswith(
+            "_" + lp_type
+        ) | x.columns.str.endswith("_" + lp_type + "_pct")
+
     for density in densities:
-        feature_annotation["lipoproteins_density_" + density] = x.columns.str.contains(
-            density
-        )
+        annot["lipoproteins_density_" + density] = x.columns.str.contains(
+            density + "_"
+        ) & (~x.columns.str.contains("non"))
     for size in sizes:
-        feature_annotation["lipoproteins_size_" + size] = x.columns.str.contains(size)
-    feature_annotation["Ratio to total"] = feature_annotation.index.str.endswith("_pct")
-    return feature_annotation
+        annot["lipoproteins_size_" + size] = x.columns.str.contains(
+            "DL_"
+        ) & x.columns.str.startswith(size + "_")
+
+    annot.loc[
+        annot["lipoproteins_density_VLDL"] == True, "lipoproteins_density_LDL"
+    ] = False
+
+    annot["Ratio to total"] = annot.index.str.endswith("_pct")
+
+    return annot
 
 
 def unsupervised(
@@ -620,19 +630,10 @@ def get_feature_network_correlation(x: DataFrame) -> DataFrame:
 
 
 def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
+    raise NotImplementedError
     corr = z_score(x).corr()
     grid = clustermap(corr, metric="correlation", cmap="RdBu_r", center=0)
 
-    p_bin = get_population(corr_s)
-    p = pd.Series(get_probability_of_gaussian_mixture(corr_s, 3, 2), index=corr_s.index)
-    p.loc[p_bin == False] = 0
-
-    net = (
-        p.rename_axis(["a", "b"])
-        .reset_index()
-        .pivot_table(index="a", columns="b", values=0)
-    )
-    np.fill_diagonal(net.values, 1.0)
     return net
 
 
@@ -640,29 +641,70 @@ def get_feature_network(
     x: DataFrame, data_type: str = "NMR", method: str = "knn"
 ) -> DataFrame:
     import networkx as nx
+    import scanpy as sc
+    from anndata import AnnData
+    from imc.graphics import get_grid_dims, rasterize_scanpy
 
     output_dir = (results_dir / "feature_network").mkdir()
 
-    if method == "knn":
-        net = get_feature_network_knn(
-            x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1)
-        )
-    elif method == "correlation":
-        net = get_feature_network_correlation(x)
-    else:
-        raise ValueError("Method not understood. Choose one of 'knn' or 'correlation'.")
+    # if method == "knn":
+    #     net = get_feature_network_knn(
+    #         x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1)
+    #     )
+    # elif method == "correlation":
+    #     net = get_feature_network_correlation(x)
+    # else:
+    #     raise ValueError("Method not understood. Choose one of 'knn' or 'correlation'.")
 
-    G = nx.from_pandas_adjacency(net)
+    # G = nx.from_pandas_adjacency(net)
+
+    # annot = get_feature_annotations(x, data_type)
+    # nx.set_node_attributes(G, annot.T.to_dict())
+    # nx.write_gexf(G, output_dir / f"network.{data_type}.gexf")
+
+    # fig, ax = plt.subplots(figsize=(6, 4))
+    # nx.draw_spectral(G, ax=ax)
+
+    # corr = z_score(x).corr()
+    # grid = clustermap(corr, metric="euclidean", cmap="RdBu_r", center=0)
+
+    # With scanpy
 
     annot = get_feature_annotations(x, data_type)
-    nx.set_node_attributes(G, annot.T.to_dict())
-    nx.write_gexf(G, output_dir / f"network.{data_type}.gexf")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    nx.draw_spectral(G, ax=ax)
+    xx = z_score(x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1))
 
-    corr = z_score(x).corr()
-    grid = clustermap(corr, metric="euclidean", cmap="RdBu_r", center=0)
+    annott = annot.loc[xx.columns].astype(int)
+    annott = annott.loc[:, annott.nunique() > 1]
+    a = AnnData(xx.T, obs=annott)
+    sc.pp.neighbors(a, use_rep="X")
+    sc.tl.umap(a)
+    sc.tl.leiden(a)
+
+    feats = annott.columns.tolist() + ["leiden"]
+    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
+    for ax, feat in zip(fig.axes, feats):
+        sc.pl.umap(a, color=feat, edges=True, ax=ax, show=False, s=50, alpha=0.5)
+    for ax in fig.axes:
+        ax.set(xlabel="", ylabel="")
+    rasterize_scanpy(fig)
+    fig.savefig(output_dir / "feature_annotation.network.scanpy.svg", **figkws)
+
+    corr = z_score(xx).corr()
+    grid = clustermap(
+        corr,
+        metric="euclidean",
+        cmap="RdBu_r",
+        center=0,
+        row_colors=a.obs["leiden"],
+        rasterized=True,
+    )
+    ax = grid.ax_heatmap
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
+    ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
+    grid.savefig(
+        output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws
+    )
 
 
 def diffusion(x, y) -> None:
