@@ -1,0 +1,57 @@
+[tool.black]
+line-length = 90
+python_interpreter = "3.8"
+include = '\.pyi?$'
+exclude = '''
+
+(
+  /(
+      \.eggs         # exclude a few common directories in the
+    | \.git          # root of the project
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+  )/
+  | foo.py           # also separately exclude a file named foo.py in
+                     # the root of the project
+)
+'''
+
+[tool.mypy]
+python_version = '3.8'
+warn_return_any = true
+warn_unused_configs = true
+
+# Packages without type annotations in shed yet
+[[tool.mypy.overrides]]
+module = [
+    'parmap.*',
+    'tqdm.*',
+    #
+    'matplotlib.*',
+    'seaborn.*',
+    #
+    'numpy.*',
+    'pandas.*',
+    'scipy.*',
+    'sklearn.*',
+    'anndata.*',
+    'scanpy.*',
+    'pymde.*',
+    'umap.*',
+    'networkx.*',
+    'statsmodels.*',
+    'pingouin.*',
+    #
+    'imc.*',
+    'seaborn_extensions.*',
+    #
+    'skimage.*',
+    'shapely.*'
+]
+ignore_missing_imports = true
