@@ -5,28 +5,26 @@ Analysis of Olink data from COVID-19 patients.
 """
 
 import sys, io, argparse
-from typing import Sequence, Tuple
-from functools import partial
+import typing as tp
 
 from tqdm import tqdm
-import numpy as np  # type: ignore
-import pandas as pd  # type: ignore
-import sklearn  # type: ignore
-import matplotlib.pyplot as plt  # type: ignore
-import seaborn as sns  # type: ignore
-from sklearn.decomposition import PCA, NMF  # type: ignore
-from sklearn.manifold import MDS, Isomap, TSNE, SpectralEmbedding  # type: ignore
-from umap import UMAP  # type: ignore
+import numpy as np
+import pandas as pd
+import sklearn
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.decomposition import PCA, NMF
+from sklearn.manifold import MDS, Isomap, TSNE, SpectralEmbedding
+from umap import UMAP
 import scipy
-import pingouin as pg  # type: ignore
-import statsmodels.api as sm  # type: ignore
-import statsmodels.formula.api as smf  # type: ignore
-import pymde  # type: ignore
-from statsmodels.nonparametric.smoothers_lowess import lowess  # type: ignore
+import pingouin as pg
+import statsmodels.formula.api as smf
+import pymde
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
-from imc.types import Path, DataFrame  # type: ignore
-from imc.utils import z_score  # type: ignore[import]
-from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot  # type: ignore
+from imc.types import Path, Series, DataFrame, Figure
+from imc.utils import z_score
+from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot
 
 from src.config import *
 
@@ -34,20 +32,26 @@ from src.config import *
 cli = None
 
 
-def main(cli: Sequence[str] = None) -> int:
+def main(cli: tp.Sequence[str] = None) -> int:
     args = get_parser().parse_args(cli)
 
-    x, y = get_x_y()
-    feature_annotations = get_feature_annotations(x)
+    x1, y1 = get_x_y_nmr()
 
-    unsupervised(x, y, attributes)
+    unsupervised(x1, y1, attributes, data_type="NMR")
 
-    get_explanatory_variables(x, y)
+    get_explanatory_variables(x1, y1)
 
-    overlay_individuals_over_global(x, y)
+    overlay_individuals_over_global(x1, y1)
 
-    supervised(x, y, [a for a in attributes if a in palettes])
+    supervised(x1, y1, [a for a in attributes if a in palettes])
 
+    # Flow cytometry
+    x2, y2 = get_x_y_flow()
+    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+
+    unsupervised(x2, y, attributes, data_type="flow_cytometry")
+
+    # Fin
     return 0
 
 
@@ -57,7 +61,242 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def get_x_y() -> Tuple[DataFrame, DataFrame]:
+def get_x_y_flow() -> tp.Tuple[DataFrame, DataFrame]:
+    """
+    Get flow cytometry dataset and its metadata.
+    """
+    projects_dir = Path("~/projects/archive").expanduser()
+    project_dir = projects_dir / "covid-flowcyto"
+
+    y2 = pd.read_parquet(project_dir / "metadata" / "annotation.pq")
+    x2 = pd.read_parquet(project_dir / "data" / "matrix_imputed.pq")
+
+    return x2, y2
+
+
+def get_matched_nmr_and_flow(x1, y1, x2, y2) -> tp.Tuple[DataFrame, DataFrame, DataFrame]:
+    """
+    Get flow cytometry dataset aligned with the NMR one.
+    """
+    x2["patient_code"] = (
+        y2["patient_code"].str.extract(r"P(\d+)")[0].astype(int).astype(str)
+    )
+    x2["date_sample"] = y2["datesamples"].astype(str)
+
+    id_cols = ["patient_code", "date_sample"]
+
+    joined = (
+        x1.join(y1[id_cols].astype(str))
+        .reset_index()
+        .merge(x2, on=id_cols, how="inner")
+        .set_index("Sample_id")
+    )
+
+    nx1 = joined.loc[:, x1.columns]
+    nx2 = joined.loc[:, x2.columns.drop(id_cols)]
+    ny = y1.reindex(nx1.index)
+
+    return nx1, nx2, ny
+
+
+def integrate_nmr_flow():
+    """
+    Integrate the two data types on common ground
+    """
+    # from sklearn.cross_decomposition import CCA
+    import rcca  # type: ignore[import]
+
+    output_dir = results_dir / "nmr_flow_integration"
+    output_dir.mkdir()
+
+    x1, y1 = get_x_y_nmr()
+    x2, y2 = get_x_y_flow()
+
+    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+
+    # # Vanilla sklearn (doesn't work well)
+    # cca = CCA()
+    # cca.fit(x1, x2)
+    # x1_cca, x2_cca = cca.transform(x1, x2)
+    # x1_cca = pd.DataFrame(x1_cca, index=x1.index)
+    # x2_cca = pd.DataFrame(x2_cca, index=x2.index)
+
+    # fig, ax = plt.subplots(figsize=(3, 3))
+    # for df, label in [(x1_cca, "NMR"), (x2_cca, "Flow cytometry")]:
+    #     ax.scatter(
+    #         *df.values[:, :2].T,
+    #         c=y.WHO_score_sample.cat.codes,
+    #         cmap="coolwarm",
+    #         label=label,
+    #         alpha=0.5,
+    #         s=2.5,
+    #     )
+
+    # CCA with CV and regularization (very good)
+    ccaCV = rcca.CCACrossValidate(
+        kernelcca=False,
+        numCCs=[2, 3, 4, 5, 6, 8, 12, 16, 20, 24],
+        regs=[0.1, 0.5, 1.0, 2, 10, 100, 1_000, 10_000, 100_000, 1_000_000],
+    )
+    ccaCV.train([z_score(x1).values, z_score(x2).values])
+    n_comp = ccaCV.best_numCC
+    reg = ccaCV.best_reg
+    print(n_comp, reg)
+    x1_cca = pd.DataFrame(ccaCV.comps[0], index=x1.index)
+    x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
+
+    # cca = rcca.CCA(reg=0.1, numCC=8)
+    # cca.train([z_score(x1).values, z_score(x2).values])
+    # x1_cca = pd.DataFrame(cca.comps[0], index=x1.index)
+    # x2_cca = pd.DataFrame(cca.comps[1], index=x2.index)
+
+    o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
+    assess_integration(
+        a=x1_cca,
+        b=x2_cca,
+        a_meta=y,
+        b_meta=y,
+        a_name="NMR",
+        b_name="Flow cytometry",
+        output_prefix=o,
+        algos=["cca", "pca", "umap"],
+        attributes=["dataset", "group", "WHO_score_sample", "patient_code"],
+        plot=True,
+        algo_kwargs=dict(umap=dict(gamma=25)),
+    )
+
+    # fig, ax = plt.subplots(figsize=(3, 3))
+    # for df, label in [(x1_cca, "NMR"), (x2_cca, "Flow cytometry")]:
+    #     ax.scatter(
+    #         *df.values[:, :2].T,
+    #         c=y["WHO_score_sample"].cat.codes,
+    #         cmap="coolwarm",
+    #         label=label,
+    #         alpha=0.5,
+    #         s=2.5,
+    #     )
+
+
+def assess_integration(
+    a: DataFrame,
+    b: DataFrame,
+    a_meta: tp.Union[Series, DataFrame],
+    b_meta: tp.Union[Series, DataFrame],
+    output_prefix: Path = None,
+    a_name: str = "IMC",
+    b_name: str = "RNA",
+    algos: tp.Sequence[str] = ["pca", "umap"],
+    attributes: tp.Sequence[str] = ["dataset"],
+    only_matched_attributes: bool = False,
+    subsample: str = None,
+    plot: bool = True,
+    algo_kwargs: tp.Dict[str, tp.Dict[str, tp.Any]] = None,
+    plt_kwargs: tp.Dict[str, tp.Any] = None,
+) -> tp.Dict[str, tp.Dict[str, float]]:
+    """
+    Keyword arguments are passed to the scanpy plotting function.
+    """
+    import scanpy as sc
+    from anndata import AnnData
+    from sklearn.metrics import silhouette_score
+    from imc.graphics import rasterize_scanpy
+
+    if plot:
+        assert output_prefix is not None, "If `plot`, `output_prefix` must be given."
+    if algo_kwargs is None:
+        algo_kwargs = dict()
+    for algo in algos:
+        if algo not in algo_kwargs:
+            algo_kwargs[algo] = dict()
+    if plt_kwargs is None:
+        plt_kwargs = dict()
+
+    if isinstance(a_meta, pd.Series):
+        a_meta = a_meta.to_frame()
+    if isinstance(b_meta, pd.Series):
+        b_meta = b_meta.to_frame()
+
+    # Silence scanpy's index str conversion
+    adata = AnnData(a.append(b))
+    adata.obs["dataset"] = [a_name] * a.shape[0] + [b_name] * b.shape[0]
+    for attr in attributes:
+        if attr == "dataset":
+            continue
+        adata.obs[attr] = "None"
+        adata.obs.loc[adata.obs["dataset"] == a_name, attr] = a_meta[attr]
+        adata.obs.loc[adata.obs["dataset"] == b_name, attr] = b_meta[attr]
+    adata.obs_names_make_unique()
+
+    if "pca" in algos:
+        sc.pp.scale(adata)
+        sc.pp.pca(adata, **algo_kwargs["pca"])
+
+    if "umap" in algos:
+        if subsample is not None:
+            if "frac=" in subsample:
+                sel_cells = adata.obs.sample(
+                    frac=float(subsample.split("frac=")[1])
+                ).index
+            elif "n=" in subsample:
+                sel_cells = adata.obs.sample(n=int(subsample.split("n=")[1])).index
+            adata = adata[sel_cells]
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata, **algo_kwargs["umap"])
+        # sc.tl.leiden(a, resolution=0.5)
+
+    remain = [x for x in algos if x not in ["pca", "umap"]]
+    if remain:
+        assert len(remain) == 1
+        algo = remain[0]
+        adata.obsm[f"X_{algo}"] = adata.X
+
+    # get score only for matching attributes across datasets
+    if only_matched_attributes:
+        attrs = [attr for attr in attributes if attr != "dataset"]
+        sel = adata.obs.groupby(attrs)["dataset"].nunique() >= 2
+        sel = sel.reset_index().drop("dataset", 1)
+        adata = adata[
+            pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :
+        ]
+
+    scores: tp.Dict[str, tp.Dict[str, float]] = dict()
+    for i, algo in enumerate(algos):
+        scores[algo] = dict()
+        for j, attr in enumerate(attributes):
+            scores[algo][attr] = silhouette_score(
+                adata.obsm[f"X_{algo}"], adata.obs[attr]
+            )
+
+    if not plot:
+        return scores
+
+    # Plot
+    adata = adata[adata.obs.sample(frac=1).index, :]
+    n, m = len(algos), len(attributes)
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), squeeze=False)
+    for i, algo in enumerate(algos):
+        for j, attr in enumerate(attributes):
+            ax = axes[i, j]
+            sc.pl.embedding(
+                adata, basis=algo, color=attr, alpha=0.5, show=False, **plt_kwargs, ax=ax
+            )
+            s = scores[algo][attr]
+            ax.set(
+                title=f"{attr}, score: {s:.3f}",
+                xlabel=algo.upper() + "1",
+                ylabel=algo.upper() + "2",
+            )
+    rasterize_scanpy(fig)
+    fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.svg", **figkws)
+    plt.close(fig)
+
+    return scores
+
+
+def get_x_y_nmr() -> tp.Sequence[DataFrame]:
+    """
+    Read NMR data and its metadata annotation.
+    """
     na_values = ["na", "unk", "unkn", "not applicable", "not available"]
     x = pd.read_csv(X_FILE, index_col=0, na_values=na_values)
     y = pd.read_csv(Y_FILE, index_col=0, na_values=na_values)
@@ -71,18 +310,14 @@ def get_x_y() -> Tuple[DataFrame, DataFrame]:
     y["race"] = pd.Categorical(y["race"])
     y["age"] = y["age"].astype(float)
     y["sex"] = pd.Categorical(y["sex"].str.capitalize())
-    y["bmi"] = (
-        y["bmi"].str.replace("\xa0", "").replace("30-45", "30.45")
-    ).astype(float)
+    y["bmi"] = (y["bmi"].str.replace("\xa0", "").replace("30-45", "30.45")).astype(float)
     y["obesity"] = pd.Categorical(
         y["obesity"].replace("overwheight", "overweight"),
         ordered=True,
         categories=["nonobese", "overweight", "obese"],
     )
     y["underlying_pulm_disease"] = pd.Categorical(
-        y["Underlying_Pulm_disease"].replace(
-            {"no": False, "yes": True, "Yes": True}
-        )
+        y["Underlying_Pulm_disease"].replace({"no": False, "yes": True, "Yes": True})
     )
     y["hospitalized"] = pd.Categorical(
         y["hospitalized"].replace({"no": False, "yes": True})
@@ -109,9 +344,7 @@ def get_x_y() -> Tuple[DataFrame, DataFrame]:
         axis=1,
     )
 
-    y["alive"] = pd.Categorical(
-        y["alive"], ordered=True, categories=["alive", "dead"]
-    )
+    y["alive"] = pd.Categorical(y["alive"], ordered=True, categories=["alive", "dead"])
     y["date_sample"] = pd.to_datetime(y["date_sample"])
     y["patient_code"] = y["patient_code"].astype(pd.Int64Dtype())
 
@@ -126,28 +359,68 @@ def get_x_y() -> Tuple[DataFrame, DataFrame]:
     return x, y
 
 
-def get_feature_annotations(x):
-    global feature_annotation
+def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
+    if data_type == "NMR":
+        return get_nmr_feature_annotations(x)
+    if data_type == "flow_cytometry":
+        return get_flow_feature_annotations(x)
+    raise ValueError("Data type not understood. Choose one of 'NMR' or 'flow_cytometry'.")
 
+
+def get_flow_feature_annotations(x):
+    import json
+
+    projects_dir = Path("~/projects/archive").expanduser()
+    project_dir = projects_dir / "covid-flowcyto"
+
+    var_annot = json.load(open(project_dir / "metadata" / "panel_variables.json"))
+    feature_annotation = pd.DataFrame(
+        index=x.columns, columns=var_annot.keys(), dtype=bool
+    )
+    for group in var_annot:
+        feature_annotation.loc[
+            ~feature_annotation.index.isin(var_annot[group]), group
+        ] = False
+    return feature_annotation
+
+
+def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
+    """
+    Annotate NMR features with broad category and some basic physical properties.
+    """
     # Lipids
     # # categories
-    lipids = ["P", "L", "PL", "C", "CE", "FC", "TG"]
+    lipoproteins = {
+        "P": "Particle concentration",
+        "L": "Lipid concentration",
+        "PL": "Phospholypid",
+        "C": "Cholesterol",
+        "CE": "Cholesteryl ester",
+        "FC": "Free cholesterol",
+        "TG": "Triglycerides",
+    }
 
-    # # size
-    "XS",
-    "S",
-    "M",
-    "L",
-    "XL",
-    "XXL",
+    densities = {"VLDL": "Very low", "LDL": "Low", "IDL": "Intermediate", "HDL": "Heavy"}
+    sizes = {
+        "XXS": "Extra extra small",
+        "XS": "Extra small",
+        "S": "Small",
+        "M": "Medium",
+        "L": "Large",
+        "XL": "Extra large",
+        "XXL": "Extra extra large",
+    }
 
-    # # ...?
-    "VLDL",
-    "LDL",
-    "HDL",
+    fatty_acids = [
+        "Omega_3",
+        "Omega_6",
+        "SFA",  # Saturated fatty acids
+        "MUFA",  # Monounsaturated fatty acids
+        "PUFA",  #  "Polyunsaturated fatty acids"
+    ]
 
     # aminoacids
-    aas = [
+    aminoacids = [
         "Ala",
         "Gln",
         "Gly",
@@ -160,46 +433,88 @@ def get_feature_annotations(x):
         "Tyr",
     ]
 
-    # Sugars
-    sugars = [
-        "Glucose",
-        "Lactate",
-        "Pyruvate",
-        "Citrate",
-        "bOHbutyrate",
+    # acids
+    acids = [
         "Acetate",
         "Acetoacetate",
         "Acetone",
+        "DHA",  # Docosahexaenoic acid
+        "Lactate",
+        "LA",  # lactate
+        "Pyruvate",
+        "Citrate",
+        "bOHbutyrate",  # beta-Hydroxybutyric acid
         "Creatinine",
+    ]
+
+    proteins = [
+        "ApoA1",
+        "ApoB",
         "Albumin",
-        "GlycA",
+    ]
+
+    # Sugars
+    sugars = [
+        "Glucose",
+        "GlycA",  # Glycan
     ]
 
     # Type of measurement/transformation
-    "_pct"
+    {"_pct": "ratio to total"}
+
+    others = {
+        "Sphingomyelins": "",
+        "Unsaturation": "Unsaturation degree",
+    }
 
     #
     feature_annotation = pd.DataFrame(
         dict(
-            lipid=x.columns.str.contains("|".join([f"_{x}" for x in lipids])),
-            # XS_lipid=x.columns.str.contains("|".join([f"_{x}" for x in lipids])),
-            aminocid=x.columns.str.contains("|".join(aas)),
+            lipoproteins=x.columns.str.contains(
+                "|".join([f"_{x}" for x in lipoproteins])
+            ),
+            fatty_acids=x.columns.str.contains("|".join(fatty_acids)),
+            aminocid=x.columns.str.contains("|".join(aminoacids)),
+            acids=x.columns.str.contains("|".join(acids)),
+            proteins=x.columns.str.contains("|".join(proteins)),
             sugars=x.columns.str.contains("|".join(sugars)),
         ),
         index=x.columns,
     )
+    for lp_type in lipoproteins:
+        feature_annotation["lipoproteins_" + lp_type] = x.columns.str.contains(
+            "|".join([f"_{x}" for x in lipoproteins[lp_type]])
+        )
+    for density in densities:
+        feature_annotation["lipoproteins_density_" + density] = x.columns.str.contains(
+            density
+        )
+    for size in sizes:
+        feature_annotation["lipoproteins_size_" + size] = x.columns.str.contains(size)
+    feature_annotation["Ratio to total"] = feature_annotation.index.str.endswith("_pct")
     return feature_annotation
 
 
-def unsupervised(x, y, attributes: List[str] = []) -> None:
+def unsupervised(
+    x: DataFrame,
+    y: DataFrame,
+    attributes: tp.Sequence[str] = None,
+    data_type: str = "NMR",
+) -> None:
+    """
+    Unsupervised analysis of data using sample/feature correlations and
+    dimentionality reduction and their visualization dependent on sample attributes.
+    """
+    if attributes is None:
+        attributes = list()
 
-    output_dir = (results_dir / "unsupervised").mkdir()
+    output_dir = (results_dir / f"unsupervised_{data_type}").mkdir()
+
+    feature_annotation = get_feature_annotations(x, data_type=data_type)
 
     ## Clustermaps
     for c in ["abs", "z"]:
-        grid = clustermap(
-            x, row_colors=y[attributes], config=c, rasterized=True
-        )
+        grid = clustermap(x, row_colors=y[attributes], config=c, rasterized=True)
         grid.savefig(
             output_dir / f"unsupervised.clustering.clustermap.{c}.svg",
             **figkws,
@@ -211,17 +526,15 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
         xticklabels=False,
         yticklabels=False,
     )
-    grid = clustermap(
-        z_score(x).corr(), center=0, **kws, row_colors=feature_annotation
-    )
+    grid = clustermap(z_score(x).corr(), center=0, **kws, row_colors=feature_annotation)
     grid.savefig(
-        output_dir / f"unsupervised.correlation_variable.clustermap.svg",
+        output_dir / "unsupervised.correlation_variable.clustermap.svg",
         **figkws,
     )
 
     grid = clustermap(z_score(x).T.corr(), **kws, row_colors=y[attributes])
     grid.savefig(
-        output_dir / f"unsupervised.correlation_samples.clustermap.svg",
+        output_dir / "unsupervised.correlation_samples.clustermap.svg",
         **figkws,
     )
 
@@ -243,25 +556,113 @@ def unsupervised(x, y, attributes: List[str] = []) -> None:
 
         for transf, label in [(lambda x: x, ""), (z_score, "Z-score.")]:
             try:  #  this will occur for example in NMF with Z-score transform
-                res = pd.DataFrame(
-                    model_inst.fit_transform(transf(x)), index=x.index
-                )
+                res = pd.DataFrame(model_inst.fit_transform(transf(x)), index=x.index)
             except ValueError:
                 continue
 
-            fig = _plot_projection(  # type: ignore[misc]
-                res,
-                y,
-                factors=attributes,
-                algo_name=name,
-                **pkwargs,
-            )
+            fig = _plot_projection(res, y, factors=attributes, algo_name=name, **pkwargs)
 
             fig.savefig(
                 output_dir / f"unsupervised.dimres.{name}.{label}svg",
                 **figkws,
             )
             plt.close(fig)
+
+
+def get_feature_network_knn(x: DataFrame, k: int = 15, **kwargs) -> DataFrame:
+    from umap.umap_ import nearest_neighbors
+    from scanpy.neighbors import Neighbors, _compute_connectivities_umap
+
+    kws = dict(
+        metric="euclidean",
+        metric_kwds={},
+        angular=True,
+        random_state=None,
+        low_memory=True,
+    )
+    kws.update(kwargs)
+
+    # Without `angular` option, there are often repetitions (i.e. same neighbor twice)
+    knn_indices, knn_distances, _ = nearest_neighbors(z_score(x).T, k, **kws)
+    distances, connectivities = _compute_connectivities_umap(
+        knn_indices,
+        knn_distances,
+        x.shape[1],
+        k,
+    )
+    net = (
+        pd.DataFrame(connectivities.toarray(), x.columns, x.columns)
+        .sort_index(0)
+        .sort_index(1)
+    )
+    np.fill_diagonal(net.values, 1.0)
+    return net
+
+
+def get_feature_network_correlation(x: DataFrame) -> DataFrame:
+    from imc.operations import get_probability_of_gaussian_mixture, get_population
+
+    corr = z_score(x).corr()
+    np.fill_diagonal(corr.values, np.nan)
+    corr_s = (6 ** corr).stack()
+
+    p_bin = get_population(corr_s)
+    p = pd.Series(get_probability_of_gaussian_mixture(corr_s, 3, 2), index=corr_s.index)
+    p.loc[p_bin == False] = 0
+
+    net = (
+        p.rename_axis(["a", "b"])
+        .reset_index()
+        .pivot_table(index="a", columns="b", values=0)
+    )
+    np.fill_diagonal(net.values, 1.0)
+    return net
+
+
+def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
+    corr = z_score(x).corr()
+    grid = clustermap(corr, metric="correlation", cmap="RdBu_r", center=0)
+
+    p_bin = get_population(corr_s)
+    p = pd.Series(get_probability_of_gaussian_mixture(corr_s, 3, 2), index=corr_s.index)
+    p.loc[p_bin == False] = 0
+
+    net = (
+        p.rename_axis(["a", "b"])
+        .reset_index()
+        .pivot_table(index="a", columns="b", values=0)
+    )
+    np.fill_diagonal(net.values, 1.0)
+    return net
+
+
+def get_feature_network(
+    x: DataFrame, data_type: str = "NMR", method: str = "knn"
+) -> DataFrame:
+    import networkx as nx
+
+    output_dir = (results_dir / "feature_network").mkdir()
+
+    if method == "knn":
+        net = get_feature_network_knn(
+            x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1)
+        )
+    elif method == "correlation":
+        net = get_feature_network_correlation(x)
+    else:
+        raise ValueError("Method not understood. Choose one of 'knn' or 'correlation'.")
+
+    G = nx.from_pandas_adjacency(net)
+
+    annot = get_feature_annotations(x, data_type)
+    nx.set_node_attributes(G, annot.T.to_dict())
+    nx.write_gexf(G, output_dir / f"network.{data_type}.gexf")
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    nx.draw_spectral(G, ax=ax)
+
+    corr = z_score(x).corr()
+    grid = clustermap(corr, metric="euclidean", cmap="RdBu_r", center=0)
 
 
 def diffusion(x, y) -> None:
@@ -293,8 +694,7 @@ def get_explanatory_variables(x, y) -> None:
     )
     corr_mat = res.join(z_score(x)).corr().loc[x.columns, res.columns]
     corr_mat.to_csv(
-        output_dir
-        / "unsupervised.variable_contibution_SpectralEmbedding.correlation.csv"
+        output_dir / "unsupervised.variable_contibution_SpectralEmbedding.correlation.csv"
     )
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 4))
@@ -302,9 +702,7 @@ def get_explanatory_variables(x, y) -> None:
     ax.scatter(*res.T.values)
     # # plot variables as vectors
     for i in corr_mat.index:
-        ax.plot(
-            (0, corr_mat.loc[i, "SE1"] / 10), (0, corr_mat.loc[i, "SE2"] / 10)
-        )
+        ax.plot((0, corr_mat.loc[i, "SE1"] / 10), (0, corr_mat.loc[i, "SE2"] / 10))
     fig.savefig(
         output_dir
         / "unsupervised.variable_contibution_SpectralEmbedding.correlation.scatter_vectors.svg",
@@ -325,8 +723,7 @@ def get_explanatory_variables(x, y) -> None:
     coefs = pd.concat(_coefs).drop("Intercept").rename_axis(index="variable")
     coefs2 = coefs.pivot_table(index="variable", columns="var", values="Coef.")
     coefs2.to_csv(
-        output_dir
-        / "unsupervised.variable_contibution_SpectralEmbedding.regression.csv"
+        output_dir / "unsupervised.variable_contibution_SpectralEmbedding.regression.csv"
     )
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 4))
@@ -421,9 +818,7 @@ def overlay_individuals_over_global(x, y) -> None:
             * 1e3
         )
 
-        dists = pd.DataFrame(
-            squareform(pdist(res)), index=res.index, columns=res.index
-        )
+        dists = pd.DataFrame(squareform(pdist(res)), index=res.index, columns=res.index)
 
         patient_timepoints = y.groupby("patient_code")["accession"].nunique()
         patients = patient_timepoints[patient_timepoints > 1].index
@@ -434,17 +829,13 @@ def overlay_individuals_over_global(x, y) -> None:
         _vector_field = list()
         _metrics = list()
         for patient in patients:
-            y2 = y.loc[y["patient_code"] == patient].sort_values(
-                ["date_sample"]
-            )
+            y2 = y.loc[y["patient_code"] == patient].sort_values(["date_sample"])
             last = y2.iloc[-1].name
             first = y2.iloc[0].name
             # res.loc[y2.index].diff().abs().sum()
 
             for s1, s2 in zip(y2.index[:-1], y2.index[1:]):
-                _vector_field.append(
-                    [*res.loc[s1]] + [*res.loc[s2] - res.loc[s1]]
-                )
+                _vector_field.append([*res.loc[s1]] + [*res.loc[s2] - res.loc[s1]])
 
             _dists = pd.Series(np.diag(dists.loc[y2.index[:-1], y2.index[1:]]))
 
@@ -483,14 +874,10 @@ def overlay_individuals_over_global(x, y) -> None:
             "Accent", len(patients)
         )
         for i, patient in enumerate(patients):
-            y2 = y.loc[y["patient_code"] == patient].sort_values(
-                ["date_sample"]
-            )
+            y2 = y.loc[y["patient_code"] == patient].sort_values(["date_sample"])
 
             color = colors[i]
-            seve_color = palettes["WHO_score_sample"][
-                y2["WHO_score_sample"].cat.codes[0]
-            ]
+            seve_color = palettes["WHO_score_sample"][y2["WHO_score_sample"].cat.codes[0]]
             outcome = y2["alive"].iloc[0]
 
             v = res.loc[y2.index].values
@@ -518,8 +905,7 @@ def overlay_individuals_over_global(x, y) -> None:
                     arrowprops=dict(arrowstyle="->", color=color),
                 )
         fig.savefig(
-            output_dir
-            / f"unsupervised.{name}.patient_walk_in_space.scatter_arrow.svg",
+            output_dir / f"unsupervised.{name}.patient_walk_in_space.scatter_arrow.svg",
             **figkws,
         )
         plt.close(fig)
@@ -532,9 +918,7 @@ def overlay_individuals_over_global(x, y) -> None:
         axes[1].set(xlabel="Overall velocity (distance/day)")
 
         axes[2].scatter(metrics["time_days"], metrics["dislocation"])
-        axes[2].set(
-            xlabel="Course (days)", ylabel="Total dislocation (end - start)"
-        )
+        axes[2].set(xlabel="Course (days)", ylabel="Total dislocation (end - start)")
 
         v = metrics["total_distance"].max()
         v -= v * 0.4
@@ -547,8 +931,7 @@ def overlay_individuals_over_global(x, y) -> None:
         axes[3].plot((0, v), (0, v), linestyle="--", color="grey")
         axes[3].set(xlabel="Total dislocation (end - start)", ylabel="Distance")
         fig.savefig(
-            output_dir
-            / f"unsupervised.{name}.patient_walk_in_space.metrics.svg",
+            output_dir / f"unsupervised.{name}.patient_walk_in_space.metrics.svg",
             **figkws,
         )
         plt.close(fig)
@@ -556,9 +939,7 @@ def overlay_individuals_over_global(x, y) -> None:
         # Reconstruct vector field
         fig, axes = plt.subplots(1, 2, figsize=(2 * 6, 4))
         axes[0].scatter(*res.values.T, alpha=0.25, color="grey")
-        axes[0].quiver(
-            *np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0]
-        )
+        axes[0].quiver(*np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0])
         axes[0].set(title="Original")
         axes[1].set(title="Interpolated")
 
@@ -566,21 +947,14 @@ def overlay_individuals_over_global(x, y) -> None:
         xx = np.linspace(-m, m, 100)
         yy = np.linspace(-m, m, 100)
         xx, yy = np.meshgrid(xx, yy)
-        u_interp = interpolate.griddata(
-            vf[:, 0:2], vf[:, 2], (xx, yy), method="cubic"
-        )
-        v_interp = interpolate.griddata(
-            vf[:, 0:2], vf[:, 3], (xx, yy), method="cubic"
-        )
+        u_interp = interpolate.griddata(vf[:, 0:2], vf[:, 2], (xx, yy), method="cubic")
+        v_interp = interpolate.griddata(vf[:, 0:2], vf[:, 3], (xx, yy), method="cubic")
         axes[1].scatter(*res.values.T, alpha=0.25, color="grey")
-        axes[1].quiver(
-            *np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0]
-        )
+        axes[1].quiver(*np.asarray(_vector_field).T, color=sns.color_palette("tab10")[0])
         axes[1].quiver(xx, yy, u_interp, v_interp)
         axes[1].set(xlim=axes[0].get_xlim(), ylim=axes[0].get_ylim())
         fig.savefig(
-            output_dir
-            / f"unsupervised.{name}.patient_walk_in_space.quiver.svg",
+            output_dir / f"unsupervised.{name}.patient_walk_in_space.quiver.svg",
             **figkws,
         )
         plt.close(fig)
@@ -588,13 +962,11 @@ def overlay_individuals_over_global(x, y) -> None:
     # Consensus
     joint_metrics = pd.concat(_joint_metrics)
     joint_metrics.to_csv(
-        output_dir
-        / f"unsupervised.all_methods.patient_walk_in_space.metrics.csv"
+        output_dir / "unsupervised.all_methods.patient_walk_in_space.metrics.csv"
     )
 
     joint_metrics = pd.read_csv(
-        output_dir
-        / f"unsupervised.all_methods.patient_walk_in_space.metrics.csv",
+        output_dir / "unsupervised.all_methods.patient_walk_in_space.metrics.csv",
         index_col=0,
     )
     joint_metricsz = (
@@ -603,9 +975,7 @@ def overlay_individuals_over_global(x, y) -> None:
         ]
         .apply(z_score)
         .join(
-            joint_metrics.groupby(level=0)[["n_timepoints", "time_days"]].apply(
-                np.mean
-            )
+            joint_metrics.groupby(level=0)[["n_timepoints", "time_days"]].apply(np.mean)
         )
         .groupby(level=0)
         .mean()
@@ -650,8 +1020,7 @@ def overlay_individuals_over_global(x, y) -> None:
         ylabel="Distance (Z-score)",
     )
     fig.savefig(
-        output_dir
-        / f"unsupervised.mean_methods.patient_walk_in_space.metrics.svg",
+        output_dir / f"unsupervised.mean_methods.patient_walk_in_space.metrics.svg",
         **figkws,
     )
 
@@ -678,10 +1047,7 @@ def overlay_individuals_over_global(x, y) -> None:
             != True
         ):
             continue
-        if (
-            pg.anova(data=df, dv="velo", between=attribute)["p-unc"].squeeze()
-            >= 0.05
-        ):
+        if pg.anova(data=df, dv="velo", between=attribute)["p-unc"].squeeze() >= 0.05:
             # continue
             pass
         _stats.append(
@@ -724,8 +1090,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
                 y=x.columns,
             )
             fig.savefig(
-                output_dir
-                / f"supervised.{attribute}.all_variables.swarmboxenplot.svg",
+                output_dir / f"supervised.{attribute}.all_variables.swarmboxenplot.svg",
                 **figkws,
             )
 
@@ -737,8 +1102,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
             plot_kws=dict(palette=palettes.get(attribute)),
         )
         fig.savefig(
-            output_dir
-            / f"supervised.{attribute}.top_differential.swarmboxenplot.svg",
+            output_dir / f"supervised.{attribute}.top_differential.swarmboxenplot.svg",
             **figkws,
         )
 
@@ -758,11 +1122,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
 
         if not stats_f.exists():
             # # Mixed effect
-            data = (
-                z_score(x)
-                .join(y)
-                .dropna(subset=[attribute, "WHO_score_sample"])
-            )
+            data = z_score(x).join(y).dropna(subset=[attribute, "WHO_score_sample"])
             data["WHO_score_sample"] = data["WHO_score_sample"].cat.codes
             _res_mlm = list()
             for feat in tqdm(x.columns):
@@ -785,9 +1145,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
             # # GLM
             _res_glm = list()
             for feat in tqdm(x.columns):
-                mdf = smf.glm(
-                    f"{feat} ~ {attribute} + WHO_score_sample", data
-                ).fit()
+                mdf = smf.glm(f"{feat} ~ {attribute} + WHO_score_sample", data).fit()
                 res = (
                     mdf.params.to_frame("coefs")
                     .join(mdf.pvalues.rename("pvalues"))
@@ -797,9 +1155,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
                 _res_glm.append(res)
             res_glm = pd.concat(_res_glm)
 
-            res = pd.concat(
-                [res_mlm.assign(model="mlm"), res_glm.assign(model="glm")]
-            )
+            res = pd.concat([res_mlm.assign(model="mlm"), res_glm.assign(model="glm")])
             res.to_csv(stats_f)
 
     all_stats = pd.concat(
@@ -816,9 +1172,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         index="feature", columns="index", values="coefs"
     )
 
-    grid = clustermap(
-        coef_mat, config="abs", cmap="RdBu_r", center=0, xticklabels=True
-    )
+    grid = clustermap(coef_mat, config="abs", cmap="RdBu_r", center=0, xticklabels=True)
 
     for attribute in attrs:
         stats_f = output_dir / f"supervised.{attribute}.model_fits.csv"
@@ -905,8 +1259,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         data["p-cor"] = pg.multicomp(data["p-unc"].values, method="fdr_bh")[1]
         fig = volcano_plot(stats=data.reset_index(drop=True))
         fig.savefig(
-            output_dir
-            / f"supervised.{attribute}.Mixed_effect_models.volcano_plot.svg",
+            output_dir / f"supervised.{attribute}.Mixed_effect_models.volcano_plot.svg",
             **figkws,
         )
 
@@ -932,9 +1285,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
             yticklabels=False,
             cbar_kws=dict(label="Z-score"),
         )
-        grid.ax_heatmap.set(
-            xlabel=f"Features (top 50 features for '{attribute}'"
-        )
+        grid.ax_heatmap.set(xlabel=f"Features (top 50 features for '{attribute}'")
         grid.fig.savefig(
             output_dir
             / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.svg",
@@ -951,9 +1302,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
             yticklabels=False,
             cbar_kws=dict(label="Z-score"),
         )
-        grid.ax_heatmap.set(
-            xlabel=f"Features (top 50 features for '{attribute}'"
-        )
+        grid.ax_heatmap.set(xlabel=f"Features (top 50 features for '{attribute}'")
         grid.fig.savefig(
             output_dir
             / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.sorted.svg",
@@ -962,9 +1311,14 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
 
 
 def _plot_projection(
-    x_df, y_df, factors, n_dims=4, algo_name="PCA", fit_lowess: bool = False
-):
-    from seaborn_extensions.annotated_clustermap import to_color_series  # type: ignore[import]
+    x_df: DataFrame,
+    y_df: DataFrame,
+    factors: tp.Sequence[str],
+    n_dims: int = 4,
+    algo_name: str = "PCA",
+    fit_lowess: bool = False,
+) -> Figure:
+    from seaborn_extensions.annotated_clustermap import to_color_series
     from seaborn_extensions.annotated_clustermap import is_numeric
 
     factors = [c for c in factors if c in y_df.columns]
@@ -987,9 +1341,7 @@ def _plot_projection(
             colors.index = y_df[factor].dropna().index
         except AttributeError:  # not a categorical
             try:
-                colors = to_color_series(
-                    y_df[factor].dropna(), palettes.get(factor)
-                )
+                colors = to_color_series(y_df[factor].dropna(), palettes.get(factor))
             except (TypeError, ValueError):
                 colors = to_color_series(y_df[factor].dropna())
         for pc in x_df.columns[:n_dims]:
@@ -1008,10 +1360,8 @@ def _plot_projection(
                 )
                 if pc == 0:
                     bb = ax.get_position()
-                    cax = fig.add_axes(
-                        (bb.xmax, bb.ymin, bb.width * 0.05, bb.height)
-                    )
-                    cbar = fig.colorbar(m, label=factor, cax=cax)
+                    cax = fig.add_axes((bb.xmax, bb.ymin, bb.width * 0.05, bb.height))
+                    _ = fig.colorbar(m, label=factor, cax=cax)
             else:
                 for value in y_df[factor].dropna().unique():
                     idx = y_df[factor].isin([value])  # to handle nan correctly
@@ -1033,12 +1383,6 @@ def _plot_projection(
     for i, ax in enumerate(axes[-1, :]):
         ax.set_xlabel(algo_name + str(i + 1))
     return fig
-
-
-import pandas as pd
-
-from imc.types import Series, DataFrame
-from imc.utils import z_score
 
 
 def score_signature(x: DataFrame, diff: Series):
@@ -1074,7 +1418,7 @@ def score_signature(x: DataFrame, diff: Series):
     return scores
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "get_ipython" not in locals():
     from typing import List
 
     try:
