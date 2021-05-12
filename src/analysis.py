@@ -369,7 +369,7 @@ def get_x_y_nmr() -> tp.Sequence[DataFrame]:
 
 def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
     if data_type == "NMR":
-        return get_nmr_feature_annotations(x)
+        return get_nmr_feature_annotations()
     if data_type == "flow_cytometry":
         return get_flow_feature_annotations(x)
     raise ValueError("Data type not understood. Choose one of 'NMR' or 'flow_cytometry'.")
@@ -392,25 +392,52 @@ def get_flow_feature_annotations(x):
     return feature_annotation
 
 
-def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
+def get_nmr_feature_annotations() -> DataFrame:
     """
     Annotate NMR features with broad category and some basic physical properties.
     """
-    # Lipids
-    # # categories
-    lipoproteins = {
-        "P": "Particle concentration",
-        "L": "Lipid concentration",
-        "PL": "Phospholypid",
-        "C": "Cholesterol",
-        "CE": "Cholesteryl ester",
-        "FC": "Free cholesterol",
-        "TG": "Triglycerides",
-    }
+    nightingale_annotation_f = metadata_dir / "df_NG_biomarker_metadata.csv"
+    if not nightingale_annotation_f.exists():
+        import tempfile
 
-    densities = {"VLDL": "Very low", "LDL": "Low", "IDL": "Intermediate", "HDL": "Heavy"}
+        from urlpath import URL
+        import pyreadr
+
+        nightingale_repo = URL("https://github.com/NightingaleHealth/ggforestplot")
+        df_name = "df_NG_biomarker_metadata.rda"
+        df_url = nightingale_repo / "raw" / "master" / "data" / df_name
+
+        tmp_f = tempfile.NamedTemporaryFile(suffix=df_url.suffix)
+        with df_url.get() as req:
+            with open(tmp_f.name, "wb") as handle:
+                if req.ok:
+                    handle.write(req.content)
+        result = pyreadr.read_r(tmp_f.name)
+        cols = [
+            "abbreviation",
+            # "alternative_names",  # <- gives problems since it is a list for each row
+            "name",
+            "subgroup",
+            "machine_readable_name",
+            "description",
+            "group",
+            # "unit",
+        ]
+        result[df_name][cols].to_csv(nightingale_annotation_f, index=False)
+    annot = (
+        pd.read_csv(nightingale_annotation_f)
+        .set_index("machine_readable_name")
+        .rename_axis(index="feature")
+    )
+
+    # Further annotate lipoproteins with physical properties
+    densities = {
+        "VLDL": "Very low",
+        "LDL": "Low",
+        "IDL": "Intermediate",
+        "HDL": "Heavy",
+    }
     sizes = {
-        # "XXS": "Extra extra small",
         "XS": "Extra small",
         "S": "Small",
         "M": "Medium",
@@ -419,108 +446,32 @@ def get_nmr_feature_annotations(x: DataFrame) -> DataFrame:
         "XXL": "Extra extra large",
     }
 
-    fattyacids = [
-        "Omega_3",
-        "Omega_6",
-        "SFA",  # Saturated fatty acids
-        "MUFA",  # Monounsaturated fatty acids
-        "PUFA",  #  "Polyunsaturated fatty acids"
-    ]
+    lipoprots = annot["group"].isin(
+        ["Lipoprotein subclasses", "Relative lipoprotein lipid concentrations"]
+    )
+    annot["density"] = np.nan
+    for density in densities:
+        annot.loc[
+            annot.index.str.contains(density + "_"),
+            "density",
+        ] = density
+    annot["size"] = np.nan
+    for size in sizes:
+        annot.loc[annot.index.str.startswith(size + "_"), "size"] = size
+    # fix VLDL/LDL mix
+    annot.loc[annot.index.str.contains("VLDL"), "density"] = "VLDL"
 
-    # aminoacids
-    aminoacids = [
-        "Ala",
-        "Gln",
-        "Gly",
-        "His",
-        "Total_BCAA",
-        "Ile",
-        "Leu",
-        "Val",
-        "Phe",
-        "Tyr",
-    ]
-
-    # acids
-    acids = [
-        "Acetate",
-        "Acetoacetate",
-        "Acetone",
-        "DHA",  # Docosahexaenoic acid
-        "Lactate",
-        "LA",  # lactate
-        "Pyruvate",
-        "Citrate",
-        "bOHbutyrate",  # beta-Hydroxybutyric acid
-        "Creatinine",
-    ]
-
-    proteins = [
-        "ApoA1",
-        "ApoB",
-        "Albumin",
-    ]
-
-    # Sugars
-    sugars = [
-        "Glucose",
-        "GlycA",  # Glycan
-    ]
+    # # make ordered categories
+    annot["density"] = pd.Categorical(
+        annot["density"], ordered=True, categories=densities.keys()
+    )
+    annot["size"] = pd.Categorical(annot["size"], ordered=True, categories=sizes.keys())
 
     # Type of measurement/transformation
-    {"_pct": "ratio to total"}
+    annot["measurement_type"] = "absolute"
+    annot.loc[annot["description"].str.contains("ratio"), "measurement_type"] = "relative"
 
-    others = {
-        "Sphingomyelins": "",
-        "Unsaturation": "Unsaturation degree",
-    }
-
-    #
-    annot = pd.DataFrame(
-        dict(
-            fattyacids=x.columns.str.contains("|".join(fattyacids)),
-            aminoacid=x.columns.str.contains("|".join(aminoacids)),
-            acids=x.columns.str.contains("|".join(acids)),
-            proteins=x.columns.str.contains("|".join(proteins)),
-            sugars=x.columns.str.contains("|".join(sugars)),
-            lipoproteins=x.columns.str.contains(
-                "|".join([f"_{x}" for x in lipoproteins])
-            ),
-        ),
-        index=x.columns,
-    ).rename_axis(index="feature")
-
-    for lp_type in lipoproteins:
-        annot["lipoprotein_" + lp_type] = x.columns.str.endswith(
-            "_" + lp_type
-        ) | x.columns.str.endswith("_" + lp_type + "_pct")
-
-    for density in densities:
-        annot["lipoprotein_density_" + density] = x.columns.str.contains(
-            density + "_"
-        ) & (~x.columns.str.contains("non"))
-
-    for size in sizes:
-        annot["lipoprotein_size_" + size] = x.columns.str.contains(
-            "DL_"
-        ) & x.columns.str.startswith(size + "_")
-
-    # fix VLDL/LDL mix
-    annot.loc[
-        annot["lipoprotein_density_VLDL"] == True, "lipoprotein_density_LDL"
-    ] = False
-
-    # add numeric rank of size/density
-    annot["size"] = np.nan
-    for i, size in enumerate(sizes, 1):
-        annot.loc[annot["lipoprotein_size_" + size] == True, "size"] = i
-    annot["density"] = np.nan
-    for i, density in enumerate(densities, 1):
-        annot.loc[annot["lipoprotein_density_" + density] == True, "density"] = i
-
-    annot["Ratio to total"] = annot.index.str.endswith("_pct")
-
-    # annot.to_csv(metadata_dir / "annot.csv")
+    # annot.to_csv(metadata_dir / "NMR_feature_annot.csv")
 
     return annot
 
