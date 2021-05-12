@@ -4,13 +4,11 @@
 Analysis of NMR data of metabolites from blood serum of COVID-19 patients.
 """
 
-import sys, io, argparse
-import typing as tp
+import sys, argparse
 
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
-import sklearn
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA, NMF
@@ -19,7 +17,6 @@ from umap import UMAP
 import scipy
 import pingouin as pg
 import statsmodels.formula.api as smf
-import pymde
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from imc.types import Path, Series, DataFrame, Figure
@@ -47,10 +44,12 @@ def main(cli: tp.Sequence[str] = None) -> int:
     supervised(x1, y1, [a for a in attributes if a in palettes])
 
     # Investigate NMR features
+    # # feature frequency
+    plot_nmr_feature_annotations(x1, y1)
     # # Feature-feature relationships and their classes
     get_feature_network(x1, y1)
+    feature_physical_aggregate_change(x1, y1)
     feature_properties_change(x1)
-    # TODO:
     feature_properties_pseudotime(x1)
 
     # Flow cytometry
@@ -489,9 +488,30 @@ def get_nmr_feature_annotations() -> DataFrame:
         "measurement_type",
     ] = "relative"
 
+    # Variables not in our dataset
+    annot = annot.drop(["HDL2_C", "HDL3_C", "Glycerol"])
+
     # annot.to_csv(metadata_dir / "NMR_feature_annot.csv")
 
     return annot
+
+
+def plot_nmr_feature_annotations(x: DataFrame, y: DataFrame) -> None:
+    output_dir = (results_dir / "feature_network").mkdir()
+
+    annot = get_nmr_feature_annotations()
+    annot = annot.query("measurement_type == 'absolute'")
+
+    attrs = ["metagroup", "group", "subgroup", "density", "size"]
+
+    cmaps = ["tab10", "tab20", tab40(range(40)), "inferno", "inferno"]
+
+    fig, axes = plt.subplots(len(attrs), 1, figsize=(4, 4 * len(attrs)))
+    for ax, attr, cmap in zip(axes, attrs, cmaps):
+        p = annot[attr].value_counts()
+        sns.barplot(x=p, y=p.index, ax=ax, palette=cmap)
+        ax.set(xlabel="Number of features")
+    fig.savefig(output_dir / "NMR_features.frequency.svg", **figkws)
 
 
 def unsupervised(
@@ -822,6 +842,73 @@ def get_feature_network(
     # TODO:
 
     #
+
+
+def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
+    output_dir = (results_dir / "feature_network").mkdir()
+    annot = get_feature_annotations(x, "NMR")
+    # Observe
+    x2 = x.loc[:, annot.index]
+    attrs = [
+        "race",
+        "sex",
+        "obesity",
+        "hospitalized",
+        "patient_group",
+        "WHO_score_sample",
+        "alive",
+    ]
+    n = max([y[attr].nunique() for attr in attrs])
+
+    # Get mean per condition/attribute
+    means: tp.Dict[str, tp.List[DataFrame]] = dict()
+    means_z: tp.Dict[str, tp.List[DataFrame]] = dict()
+    for i, attr in enumerate(attrs):
+        means[attr] = list()
+        means_z[attr] = list()
+        groups = y[attr].cat.categories
+        for j, group in enumerate(groups):
+            h = y[attr] == group
+            group_x = (
+                x2.loc[h]
+                .T.join(annot)
+                .groupby(["density", "size"])
+                .mean()
+                .mean(1)
+                .to_frame("value")
+                .pivot_table(index="density", columns="size")["value"]
+            )
+            if j == 0:
+                ctrl = group_x
+            means[attr].append(group_x)
+            # fold over normal
+            means_z[attr].append(np.log(group_x / ctrl))
+
+    # Plot
+    for label, z in [("abs", False), ("z_score", True)]:
+        fig, axes = plt.subplots(n, len(attrs), figsize=(4 * len(attrs), 2.5 * n))
+        for i, attr in enumerate(attrs):
+            groups = y[attr].cat.categories
+            axes[0, i].set(title=attr)
+            for j, group in enumerate(groups):
+                ax = axes[j, i]
+                if z:
+                    group_x = means_z[attr][j]
+                    flat = group_x.stack().dropna().values
+                    group_x = (group_x - flat.mean()) / flat.std()
+                    kws = dict(vmin=-3, vmax=3, cmap="coolwarm")
+                else:
+                    group_x = means[attr][j]
+                    kws = dict(vmin=0, vmax=1)
+                sns.heatmap(group_x, ax=ax, **kws, square=True)
+                ax.set(ylabel=group)
+                ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+            for ax in axes[j + 1 :, i]:
+                ax.axis("off")
+        fig.savefig(
+            output_dir / f"NMR_features.mean.dependent_on_patient_attributes.{label}.svg",
+            **figkws,
+        )
 
 
 def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
