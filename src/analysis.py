@@ -204,8 +204,6 @@ def assess_integration(
     """
     Keyword arguments are passed to the scanpy plotting function.
     """
-    import scanpy as sc
-    from anndata import AnnData
     from sklearn.metrics import silhouette_score
     from imc.graphics import rasterize_scanpy
 
@@ -403,6 +401,10 @@ def get_nmr_feature_annotations() -> DataFrame:
         from urlpath import URL
         import pyreadr
 
+        # Another source could the the UK Biobank, e.g.:
+        # https://biobank.ndph.ox.ac.uk/showcase/showcase/docs/Nightingale_biomarker_groups.txt
+
+        # Reading these data from the ggforestplot R package
         nightingale_repo = URL("https://github.com/NightingaleHealth/ggforestplot")
         df_name = "df_NG_biomarker_metadata.rda"
         df_url = nightingale_repo / "raw" / "master" / "data" / df_name
@@ -424,6 +426,8 @@ def get_nmr_feature_annotations() -> DataFrame:
             # "unit",
         ]
         result[df_name][cols].to_csv(nightingale_annotation_f, index=False)
+
+    # read saved
     annot = (
         pd.read_csv(nightingale_annotation_f)
         .set_index("machine_readable_name")
@@ -446,9 +450,19 @@ def get_nmr_feature_annotations() -> DataFrame:
         "XXL": "Extra extra large",
     }
 
-    lipoprots = annot["group"].isin(
-        ["Lipoprotein subclasses", "Relative lipoprotein lipid concentrations"]
-    )
+    lipoprots = [
+        "Cholesterol",
+        "Triglycerides",
+        "Phospholipids",
+        "Cholesteryl esters",
+        "Free cholesterol",
+    ]
+    annot["metagroup"] = annot["group"]
+    annot.loc[
+        annot["group"].isin(lipoprots) | annot["group"].str.contains("Lipo|lipo|lipid"),
+        "metagroup",
+    ] = "Lipid"
+
     annot["density"] = np.nan
     for density in densities:
         annot.loc[
@@ -469,7 +483,11 @@ def get_nmr_feature_annotations() -> DataFrame:
 
     # Type of measurement/transformation
     annot["measurement_type"] = "absolute"
-    annot.loc[annot["description"].str.contains("ratio"), "measurement_type"] = "relative"
+    annot.loc[
+        annot["description"].str.contains("ratio ", case=False, regex=False)
+        | annot["description"].str.contains("ratios", case=False, regex=False),
+        "measurement_type",
+    ] = "relative"
 
     # annot.to_csv(metadata_dir / "NMR_feature_annot.csv")
 
@@ -492,10 +510,19 @@ def unsupervised(
     output_dir = (results_dir / f"unsupervised_{data_type}").mkdir()
 
     feature_annotation = get_feature_annotations(x, data_type=data_type)
+    feature_annotation = feature_annotation.drop(
+        ["abbreviation", "name", "description", "subgroup"], axis=1
+    )
 
     ## Clustermaps
     for c in ["abs", "z"]:
-        grid = clustermap(x, row_colors=y[attributes], config=c, rasterized=True)
+        grid = clustermap(
+            x,
+            row_colors=y[attributes],
+            col_colors=feature_annotation,
+            config=c,
+            rasterized=True,
+        )
         grid.savefig(
             output_dir / f"unsupervised.clustering.clustermap.{c}.svg",
             **figkws,
@@ -611,10 +638,8 @@ def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
 def get_feature_network(
     x: DataFrame, y: DataFrame, data_type: str = "NMR", method: str = "knn"
 ) -> DataFrame:
-    import networkx as nx
-    import scanpy as sc
-    from anndata import AnnData
-    from imc.graphics import get_grid_dims, rasterize_scanpy
+    # import networkx as nx
+    from imc.graphics import rasterize_scanpy
 
     output_dir = (results_dir / "feature_network").mkdir()
 
@@ -641,12 +666,13 @@ def get_feature_network(
 
     # With scanpy
     annot = get_feature_annotations(x, data_type)
+    annot = annot.drop(["abbreviation", "name", "description", "subgroup"], axis=1)
 
-    xx = z_score(x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1))
+    xx = z_score(x.drop(annot.query("measurement_type == 'relative'").index, axis=1))
 
-    annott = annot.loc[xx.columns].fillna(-1).astype(int)
-    annott = annott.loc[:, annott.nunique() > 1]
-    annott = annott.loc[:, ~annott.columns.str.contains("_")]
+    annott = annot.loc[
+        xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")
+    ]
 
     stats = pd.read_csv(
         results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
@@ -659,36 +685,29 @@ def get_feature_network(
     sc.tl.leiden(a)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
-    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
-    cmaps = ["viridis"] * 6 + ["inferno"] * 2 + ["tab10"] + ["coolwarm"]
+    fig, ax = plt.subplots(
+        len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
+    )
+    group_cmap = tab40(range(a.obs["group"].nunique()))[:, :3]
+    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    cmaps = (
+        [group_cmap.tolist(), "Paired"]
+        + [density_cmap, size_cmap]
+        + ["tab10"]
+        + ["coolwarm"]
+    )
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        sc.pl.umap(
-            a, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
+        p = (
+            dict(cmap=cmap)
+            if a.obs[feat].dtype.name.startswith("float")
+            else dict(palette=cmap)
         )
+        sc.pl.umap(a, color=feat, **p, edges=True, ax=ax, show=False, s=50, alpha=0.5)
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
     rasterize_scanpy(fig)
     fig.savefig(output_dir / "feature_annotation.network.scanpy.svg", **figkws)
-
-    # Plot one with complete feature annotations
-    _a = AnnData(xx.T, obs=annot.loc[xx.columns].fillna(-1).astype(int).join(change))
-    sc.pp.neighbors(_a, n_neighbors=15, use_rep="X")
-    sc.tl.umap(_a)
-    sc.tl.leiden(_a)
-    feats = annot.columns.tolist() + ["leiden", "alive"]
-    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
-    cmaps = ["viridis"] * annot.shape[1] + ["tab10"] + ["coolwarm"]
-    for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        sc.pl.umap(
-            _a, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
-        )
-    for ax in fig.axes:
-        ax.set(xlabel="", ylabel="")
-    rasterize_scanpy(fig)
-    fig.savefig(
-        output_dir / "feature_annotation.network.scanpy.full_feature_annotation.svg",
-        **figkws,
-    )
 
     # Visualize as heatmaps as well
     corr = z_score(xx)
@@ -727,12 +746,12 @@ def get_feature_network(
     )
 
     # Check the same on steady state only
-    annot = get_feature_annotations(x, data_type)
-    xx = z_score(x.drop(x.columns[x.columns.str.endswith("_pct")], axis=1))
-    xx = xx.loc[y.query("group == 'control'").index]
-    annott = annot.loc[xx.columns].fillna(-1).astype(int)
-    annott = annott.loc[:, annott.nunique() > 1]
-    annott = annott.loc[:, ~annott.columns.str.contains("_")]
+    xx = x.loc[y.query("group == 'control'").index]
+    xx = z_score(xx.drop(annot.query("measurement_type == 'relative'").index, axis=1))
+    xx = xx.loc[:, annot.index[annot["subgroup"].str.endswith("DL")]]
+    annott = annot.loc[
+        xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")
+    ]
 
     an = AnnData(xx.T, obs=annott.join(change))
     sc.pp.neighbors(an, n_neighbors=15, use_rep="X")
@@ -740,12 +759,19 @@ def get_feature_network(
     sc.tl.leiden(an)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
-    fig = get_grid_dims(feats, return_fig=True, sharex=True, sharey=True)
-    cmaps = ["viridis"] * 6 + ["inferno"] * 2 + ["tab10"] + ["coolwarm"]
+    fig, ax = plt.subplots(
+        len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
+    )
+    size_cmap = sns.color_palette("inferno", an.obs["size"].nunique())
+    density_cmap = sns.color_palette("inferno", an.obs["density"].nunique())
+    cmaps = ["tab20b", "Paired"] + [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        sc.pl.umap(
-            an, color=feat, cmap=cmap, edges=True, ax=ax, show=False, s=50, alpha=0.5
+        p = (
+            dict(cmap=cmap)
+            if an.obs[feat].dtype.name.startswith("float")
+            else dict(palette=cmap)
         )
+        sc.pl.umap(an, color=feat, **p, edges=True, ax=ax, show=False, s=50, alpha=0.5)
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
     rasterize_scanpy(fig)
@@ -832,7 +858,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
     )
 
     annot = get_feature_annotations(x, data_type)
-    data = annot[["size", "density"]].astype(pd.CategoricalDtype(ordered=True))
+    annot = annot.loc[annot["measurement_type"] == "absolute"]
 
     rows = ["size", "density"]
     cols = changes.columns
@@ -844,14 +870,14 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
     for i, row in enumerate(rows):
         for j, col in enumerate(cols):
             s = swarmboxenplot(
-                data=data.join(changes),
+                data=annot.join(changes),
                 x=row,
                 y=col,
                 ax=axes[i, j],
                 plot_kws=dict(palette="inferno"),
             )
             axes[i, j].axhline(0, linestyle="--", color="grey")
-            axes[i, j].set(title=col, ylabel="log fold-change")
+            axes[i, j].set(title=col, ylabel="log fold-change", ylim=(-2.5, 1.5))
     fig.savefig(
         output_dir / "disease_change.dependent_on_feature_properties.swarmboxenplot.svg",
         **figkws,
@@ -862,66 +888,41 @@ def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
     """
     See relationship between feature properties and pseudotime.
     """
-    raise NotImplementedError
     output_dir = (results_dir / "feature_network").mkdir()
-
-    # Collect fold-changes
-    _changes = list()
-    for attr in ["hospitalized", "alive", "patient_group"]:
-        stats = pd.read_csv(
-            results_dir / "supervised" / f"supervised.{attr}.all_variables.stats.csv",
-        )
-        stats["A"] = stats["A"].astype(str)
-        stats["B"] = stats["B"].astype(str)
-        _v = "hedges" if "hedges" in stats.columns else "hedges_g"
-
-        for _, (a, b) in stats[["A", "B"]].drop_duplicates().iterrows():
-            change = (
-                stats.query(f"A == '{a}' & B == '{b}'")
-                .set_index("Variable")[_v]
-                .rename(f"{attr}: {b}-{a}")
-                * -1
-            )
-            _changes.append(change)
-    changes = pd.concat(_changes, 1)
-
-    # Visualize all fold-changes
-    grid = clustermap(changes, xticklabels=True, cmap="coolwarm", center=0)
-    grid.savefig(
-        output_dir / "disease_change.all_variables.clustermap.svg",
-        **figkws,
+    corr_mat = pd.read_csv(
+        results_dir
+        / "unsupervised"
+        / "unsupervised.variable_contibution_SpectralEmbedding.correlation.csv",
+        index_col=0,
     )
-
     annot = get_feature_annotations(x, data_type)
-    data = annot[["size", "density"]].astype(pd.CategoricalDtype(ordered=True))
-
+    annot = annot.loc[annot["measurement_type"] == "absolute"]
     rows = ["size", "density"]
-    cols = changes.columns
+    cols = corr_mat.columns
     n, m = (
         len(rows),
         len(cols),
     )
-    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), sharex="row", sharey="row")
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n))
     for i, row in enumerate(rows):
         for j, col in enumerate(cols):
             s = swarmboxenplot(
-                data=data.join(changes),
+                data=annot.join(corr_mat),
                 x=row,
                 y=col,
                 ax=axes[i, j],
                 plot_kws=dict(palette="inferno"),
             )
             axes[i, j].axhline(0, linestyle="--", color="grey")
-            axes[i, j].set(title=col, ylabel="log fold-change")
+            axes[i, j].set(title=col, ylabel="Correlation with pseudotime axis")
     fig.savefig(
-        output_dir / "disease_change.dependent_on_feature_properties.swarmboxenplot.svg",
+        output_dir
+        / "pseudotime_change.dependent_on_feature_properties.swarmboxenplot.svg",
         **figkws,
     )
 
 
 def diffusion(x, y) -> None:
-    from anndata import AnnData
-    import scanpy as sc
 
     a = AnnData(x, obs=y)
     sc.pp.scale(a)
@@ -938,7 +939,6 @@ def get_explanatory_variables(x, y) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.
     """
-
     output_dir = (results_dir / "unsupervised").mkdir()
 
     res = pd.DataFrame(
@@ -1673,8 +1673,6 @@ def score_signature(x: DataFrame, diff: Series):
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():
-    from typing import List
-
     try:
         sys.exit(main())
     except KeyboardInterrupt:

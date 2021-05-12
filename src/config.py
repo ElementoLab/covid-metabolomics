@@ -5,15 +5,20 @@ Configuration, constants and helper functions for the project.
 """
 
 import numpy as np
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
 import seaborn as sns
+from anndata import AnnData
+import scanpy as sc
 
 from imc.types import Path, DataFrame  # type: ignore
 
 
 class PyMDE:
-    import pymde
+    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
+        import pymde
 
-    def fit_transform(self, x, embedding_dim=2, **kwargs):
         if isinstance(x, pd.DataFrame):
             x = x.values
         embedding = (
@@ -25,9 +30,7 @@ class PyMDE:
 
 
 class DiffMap:
-    from anndata import AnnData
-
-    def fit_transform(self, x, embedding_dim=2, **kwargs):
+    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
         a = AnnData(x)
         sc.pp.neighbors(a, use_rep="X")
         sc.tl.diffmap(a)
@@ -62,11 +65,20 @@ palettes = dict(
     sex=sns.color_palette("Pastel1")[3:5],
     obesity=sns.color_palette("tab10")[3:5],
     hospitalized=sns.color_palette("Set2")[:2],
-    patient_group=np.asarray(sns.color_palette("Set1"))[
-        [2, 1, 7, 3, 0]
-    ].tolist(),
+    patient_group=np.asarray(sns.color_palette("Set1"))[[2, 1, 7, 3, 0]].tolist(),
     WHO_score_sample=sns.color_palette("inferno", 9),
     WHO_score_patient=sns.color_palette("inferno", 9),
     alive=sns.color_palette("Dark2")[:2],
 )
 cmaps = dict(age="winter_r", bmi="copper")
+
+_q = np.random.choice(range(40), 40, replace=False)
+tab40 = matplotlib.colors.ListedColormap(
+    colors=np.concatenate(
+        [
+            plt.get_cmap("tab20c")(range(20)),
+            plt.get_cmap("tab20b")(range(20)),
+        ]
+    )[_q],
+    name="tab40",
+)

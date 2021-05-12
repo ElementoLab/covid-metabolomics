@@ -80,3 +80,8 @@ Make network, export to Gephi, plot & export locations.
 OR plot in scanpy, force_atlas2 with edges
 
 OR hierarchical clustering
+
+
+Background on lipoproteins:
+https://www-ncbi-nlm-nih-gov.ezproxy.med.cornell.edu/pmc/articles/PMC2893739/
+https://www-sciencedirect-com.ezproxy.med.cornell.edu/science/article/pii/S1388198100001232?via%3Dihub
