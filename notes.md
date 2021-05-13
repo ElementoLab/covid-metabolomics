@@ -85,3 +85,5 @@ OR hierarchical clustering
 Background on lipoproteins:
 https://www-ncbi-nlm-nih-gov.ezproxy.med.cornell.edu/pmc/articles/PMC2893739/
 https://www-sciencedirect-com.ezproxy.med.cornell.edu/science/article/pii/S1388198100001232?via%3Dihub
+
+in relation to COVID: https://www-ncbi-nlm-nih-gov.ezproxy.med.cornell.edu/pmc/articles/PMC7605809/

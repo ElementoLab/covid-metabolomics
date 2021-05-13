@@ -33,6 +33,7 @@ module = [
     'parmap.*',
     'urlpath.*',
     'tqdm.*',
+    'bs4.*',
     #
     'matplotlib.*',
     'seaborn.*',

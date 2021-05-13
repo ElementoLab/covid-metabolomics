@@ -42,10 +42,11 @@ def main(cli: tp.Sequence[str] = None) -> int:
     overlay_individuals_over_global(x1, y1)
 
     supervised(x1, y1, [a for a in attributes if a in palettes])
+    # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
 
     # Investigate NMR features
     # # feature frequency
-    plot_nmr_feature_annotations(x1, y1)
+    plot_nmr_feature_annotations()
     # # Feature-feature relationships and their classes
     get_feature_network(x1, y1)
     feature_physical_aggregate_change(x1, y1)
@@ -298,7 +299,7 @@ def assess_integration(
     return scores
 
 
-def get_x_y_nmr() -> tp.Sequence[DataFrame]:
+def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
     """
     Read NMR data and its metadata annotation.
     """
@@ -496,7 +497,7 @@ def get_nmr_feature_annotations() -> DataFrame:
     return annot
 
 
-def plot_nmr_feature_annotations(x: DataFrame, y: DataFrame) -> None:
+def plot_nmr_feature_annotations() -> None:
     output_dir = (results_dir / "feature_network").mkdir()
 
     annot = get_nmr_feature_annotations()
@@ -655,9 +656,7 @@ def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
     return net
 
 
-def get_feature_network(
-    x: DataFrame, y: DataFrame, data_type: str = "NMR", method: str = "knn"
-) -> DataFrame:
+def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> DataFrame:
     # import networkx as nx
     from imc.graphics import rasterize_scanpy
 
@@ -701,7 +700,7 @@ def get_feature_network(
 
     a = AnnData(xx.T, obs=annott.join(change))
     sc.pp.neighbors(a, n_neighbors=15, use_rep="X")
-    sc.tl.umap(a)
+    sc.tl.umap(a, gamma=1)
     sc.tl.leiden(a)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
@@ -763,6 +762,66 @@ def get_feature_network(
     grid.savefig(
         output_dir / "feature_annotation.network.scanpy.clustermap.symmetric.svg",
         **figkws,
+    )
+
+    # Per group only
+    feats = annott.columns.tolist()[2:] + ["leiden", "alive"]
+    obs = annott.query("group == 'Lipoprotein subclasses'").join(change)
+    embeddings = ["draw_graph_fa", "umap", "tsne", "pymde", "pymde_alt"]
+    n, m = len(feats), len(embeddings)
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), sharex="col", sharey="col")
+    a = AnnData(xx.T.loc[obs.index], obs=obs)
+    sc.pp.neighbors(a, n_neighbors=15, use_rep="X")
+    sc.tl.umap(a, gamma=1)
+    sc.tl.draw_graph(a)
+    sc.tl.tsne(a, use_rep="X")
+    sc.tl.leiden(a)
+    PyMDE().fit_anndata(a).fit_anndata(a, "alternate")
+
+    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    cmaps = [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
+    for ax, feat, cmap in zip(axes, feats, cmaps):
+        p = (
+            dict(cmap=cmap)
+            if a.obs[feat].dtype.name.startswith("float")
+            else dict(palette=cmap)
+        )
+        for j, embedding in enumerate(embeddings):
+            sc.pl.embedding(
+                a,
+                basis=embedding,
+                color=feat,
+                **p,
+                edges=True,
+                ax=ax[j],
+                show=False,
+                s=50,
+                alpha=0.5,
+            )
+    for ax in axes.flat:
+        ax.set(xlabel="", ylabel="")
+    fig.savefig(
+        output_dir / "feature_annotation.network.scanpy.only_lipoproteins.svg", **figkws
+    )
+
+    import ringity
+    import networkx as nx
+
+    G = nx.from_scipy_sparse_matrix(a.obsp["connectivities"])
+    dgm = ringity.diagram(G)
+    dgm.score
+
+    fig = plt.figure(constrained_layout=False)
+    gs = fig.add_gridspec(nrows=3, ncols=3, left=0.05, right=0.48, wspace=0.05)
+    ax1 = fig.add_subplot(gs[:-1, :])
+    ax2 = fig.add_subplot(gs[-1, :-1])
+    ax3 = fig.add_subplot(gs[-1, -1])
+    ringity.plots.plot_nx(G, ax=ax1)
+    ringity.plots.plot_seq(dgm, ax=ax2)
+    ringity.plots.plot_dgm(dgm, ax=ax3)
+    fig.savefig(
+        output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws
     )
 
     # Check the same on steady state only

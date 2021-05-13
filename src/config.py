@@ -3,6 +3,7 @@
 """
 Configuration, constants and helper functions for the project.
 """
+from __future__ import annotations
 import typing as tp
 
 import numpy as np
@@ -12,14 +13,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from anndata import AnnData
 import scanpy as sc
+import pymde
 
 from imc.types import Path, DataFrame  # type: ignore
 
 
 class PyMDE:
-    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
-        import pymde
+    def fit_anndata(self, anndata, config="default") -> PyMDE:
+        if config == "default":
+            anndata.obsm["X_pymde"] = self.fit_transform(anndata.X)
+        elif config == "alternate":
+            anndata.obsm["X_pymde_alt"] = self.fit_transform(
+                anndata.X,
+                embedding_dim=2,
+                attractive_penalty=pymde.penalties.Quadratic,
+                repulsive_penalty=None,
+            )
+        return self
 
+    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
         if isinstance(x, pd.DataFrame):
             x = x.values
         embedding = (
