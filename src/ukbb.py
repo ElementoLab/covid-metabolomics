@@ -91,6 +91,9 @@ def get_x_y_nmr(transformation="imputed") -> tp.Tuple[DataFrame, DataFrame]:
         x_file = data_dir / "ukb46898.reharm.csv.gz"
     elif transformation == "imputed":
         x_file = data_dir / "ukb46898.reharm.imputed.csv.gz"
+    else:
+        raise ValueError
+
     if not x_file.exists():
         ukbiobank_f = data_dir / "ukb46898.csv.gz"
         df = pd.read_csv(ukbiobank_f, index_col=0)
@@ -117,6 +120,7 @@ def get_x_y_nmr(transformation="imputed") -> tp.Tuple[DataFrame, DataFrame]:
 
         x_annot = get_nmr_feature_annotations().query("measurement_type == 'absolute'")
         x_var = pd.concat([x_var.reset_index(), x_annot.reset_index()], axis=1)
+        x_var.to_csv(metadata_dir / "ukbb_var_id_mapping.csv", index=False)
         x.columns = x_var["feature"]
         x.to_csv(x_file)
     x = pd.read_csv(x_file, index_col=0)
@@ -127,6 +131,10 @@ def get_x_y_nmr(transformation="imputed") -> tp.Tuple[DataFrame, DataFrame]:
         .max()
     )
     y = y.reindex(x.index)
+    birth = pd.read_csv(metadata_dir / "original" / "birth_info", index_col=0)
+    birth.columns = ["year", "month"]
+    age = ((birth["year"] - birth["year"].max()) - birth["month"] / 12) * -1
+    y = y.join(age.rename("age"))
     return x, y
 
 
@@ -227,7 +235,7 @@ def plot_nmr_robustness() -> None:
     ax.scatter(rob["R"] ** 6, cv2.reindex(rob.index), alpha=0.5)
 
 
-def model_data():
+def model_data(x: DataFrame, y: DataFrame):
     """
     Exponentially modified Gaussian
 
@@ -235,9 +243,22 @@ def model_data():
     https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.exponnorm.html#scipy.stats.exponnorm
     https://docs.pymc.io/api/distributions/continuous.html#pymc3.distributions.continuous.ExGaussian
     """
-    import pymc3
 
-    pymc3.distributions.continuous.ExGaussian
+    import statsmodels.api as sm
+
+    model = sm.GLM(endog=y["age"], exog=sm.add_constant(x))
+    res = model.fit().summary2().tables[1]
+    res2 = res.copy()
+    res2["Coef."] = model.fit_regularized(L1_wt=0).params
+
+    from ngs_toolkit.utils import log_pvalues
+
+    fig, axes = plt.subplots(1, 2)
+    axes[0].scatter(res["Coef."], log_pvalues(res["P>|z|"]), alpha=0.5, s=2)
+    axes[1].scatter(res2["Coef."], log_pvalues(res2["P>|z|"]), alpha=0.5, s=2)
+
+    axes[0].set(xlim=(-3, 30))
+    axes[1].set(xlim=(-3, 30))
 
 
 def impute_x(x: DataFrame, method="factorization", save: bool = True) -> DataFrame:
@@ -556,6 +577,9 @@ def get_feature_network(x: DataFrame) -> DataFrame:
         output_dir / "feature_annotation.network.scanpy.ringity_analysis.ukbb.svg",
         **figkws,
     )
+
+    # TODO: get empirical p-value
+    # # https://gist.github.com/gotgenes/2770023
 
 
 def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
