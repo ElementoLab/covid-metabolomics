@@ -102,3 +102,8 @@ tab40 = matplotlib.colors.ListedColormap(
     )[_q],
     name="tab40",
 )
+
+patches = (
+    matplotlib.collections.PatchCollection,
+    matplotlib.collections.PathCollection,
+)

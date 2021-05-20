@@ -67,6 +67,9 @@ def main(cli: tp.Sequence[str] = None) -> int:
     cross_data_type_predictions()
     # # Develop common latent space
     integrate_nmr_flow()
+    # # Predict disease severity based on combination of data
+    predict_outcomes()
+
     # Fin
     return 0
 
@@ -2031,6 +2034,175 @@ def assess_integration(
     plt.close(fig)
 
     return scores
+
+
+def predict_outcomes() -> None:
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.feature_selection import SelectKBest, mutual_info_classif
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.svm import LinearSVC
+    from sklearn.model_selection import cross_validate
+
+    from joblib import Parallel, delayed
+
+    def fit(_, model, X, y, k=None):
+        feature_attr = {
+            RandomForestClassifier: "feature_importances_",
+            LogisticRegression: "coef_",
+            # ElasticNet: "coef_",
+            LinearSVC: "coef_",
+        }
+        kws = dict(
+            cv=10, scoring="roc_auc", return_train_score=True, return_estimator=True
+        )
+
+        # # Randomize order of both X and y (jointly)
+        # X = X.sample(frac=1.0).copy()
+        # y = y.reindex(X.index).copy()
+
+        clf = model()
+
+        # Build pipeline
+        components = list()
+        # # Z-score if needed
+        if not isinstance(clf, RandomForestClassifier):
+            components += [("scaler", StandardScaler())]
+        # # Do feature selection if requested
+        if k is not None:
+            components += [("selector", SelectKBest(mutual_info_classif, k=k))]
+        # # Finally add the classifier
+        components += [("classifier", clf)]
+        pipe = Pipeline(components)
+
+        # Train/cross-validate with real data
+        out1 = cross_validate(pipe, X, y, **kws)
+        # Train/cross-validate with shuffled labels
+        out2 = cross_validate(pipe, X, y.sample(frac=1.0), **kws)
+
+        # Extract coefficients/feature importances
+        feat = feature_attr[clf.__class__]
+        coefs = tuple()
+        for out in [out1, out2]:
+            co = pd.DataFrame(
+                [
+                    pd.Series(
+                        getattr(c["classifier"], feat),
+                        index=X.columns[c["selector"].get_support()]
+                        if k is not None
+                        else X.columns,
+                    )
+                    for c in out["estimator"]
+                ]
+            )
+            # If keeping all variables, simply report mean
+            if k is None:
+                coefs += (co.mean(0),)
+            # otherwise, simply count how often variable was chosen at all
+            else:
+                coefs += ((~co.isnull()).sum(),)
+        return (
+            out1["train_score"].mean(),
+            out1["test_score"].mean(),
+            out2["train_score"].mean(),
+            out2["test_score"].mean(),
+        ) + coefs
+
+    output_dir = results_dir / "predict"
+    output_dir.mkdir()
+
+    x1, y1 = get_x_y_nmr()
+    x2, y2 = get_x_y_flow()
+    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+    xz1 = z_score(x1)
+    xz2 = z_score(x2)
+
+    # Use only mild-severe patients
+    m = y.query("patient_group.isin(['moderate', 'severe']).values", engine="python")
+
+    # Convert classes to binary
+    target = m["patient_group"].cat.remove_unused_categories().cat.codes
+
+    # Align
+    xz1 = xz1.loc[target.index]
+    xz2 = xz2.loc[target.index]
+
+    # # For the other classifiers
+    N = 100
+
+    insts = [
+        RandomForestClassifier,
+        # LogisticRegression,
+        # LinearSVC,
+        # ElasticNet,
+    ]
+    for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
+        for label, k in [("", None), (".feature_selection", 8)]:
+            for model in insts:
+                name = str(type(model())).split(".")[-1][:-2]
+                print(name)
+
+                # Fit
+                res = Parallel(n_jobs=-1)(
+                    delayed(fit)(i, model=RandomForestClassifier, X=X, y=target, k=k)
+                    for i in range(N)
+                )
+                # Get ROC_AUC scores only
+                scores = pd.DataFrame(
+                    np.asarray([r[:-2] for r in res]),
+                    columns=[
+                        "train_score",
+                        "test_score",
+                        "train_score_random",
+                        "test_score_random",
+                    ],
+                ).rename_axis(index="iteration")
+                scores.to_csv(
+                    output_dir
+                    / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv"
+                )
+
+    label = ""
+    k = None
+    name = str(type(model())).split(".")[-1][:-2]
+    _res = list()
+    for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
+        scores = pd.read_csv(
+            output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv",
+            index_col=0,
+        )
+        p = scores.loc[:, scores.columns.str.contains("test")].melt()
+        _res.append(p.assign(dataset=dtype))
+    res = pd.concat(_res)
+    res["dataset"] = pd.Categorical(
+        res["dataset"], categories=["NMR", "flow_cytometry", "combined"]
+    )
+    res["variable"] = pd.Categorical(
+        res["variable"], categories=["test_score_random", "test_score"]
+    )
+
+    fig, _ = swarmboxenplot(data=res, x="variable", hue="dataset", y="value")
+    fig.axes[0].axhline(0.5, linestyle="--", color="grey")
+    fig.savefig(
+        output_dir
+        / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.svg",
+        **figkws,
+    )
+
+    p = res.query("variable == 'test_score'")
+    fig, _ = swarmboxenplot(data=p, x="dataset", y="value")
+    fig.axes[0].axhline(0.5, linestyle="--", color="grey")
+
+    s = p.groupby("dataset")["value"].mean().squeeze()
+    for i, q in enumerate(s.index):
+        fig.axes[0].text(i, 0.7, s=f"{s[q]:.3f}", ha="center")
+    fig.savefig(
+        output_dir
+        / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
+        **figkws,
+    )
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():

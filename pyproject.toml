@@ -34,6 +34,7 @@ module = [
     'urlpath.*',
     'tqdm.*',
     'bs4.*',
+    'joblib.*',
     #
     'matplotlib.*',
     'seaborn.*',
