@@ -71,6 +71,7 @@ attributes = [
     "WHO_score_sample",
     "WHO_score_patient",
     "alive",
+    "days_since_symptoms",
 ]
 
 palettes = dict(

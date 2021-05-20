@@ -31,15 +31,15 @@ cli = None
 
 def main(cli: tp.Sequence[str] = None) -> int:
     """The main function to run the analysis."""
-    args = get_parser().parse_args(cli)
+    # args = get_parser().parse_args(cli)
 
     x1, y1 = get_x_y_nmr()
 
     unsupervised(x1, y1, attributes, data_type="NMR")
 
-    get_explanatory_variables(x1, y1)
+    get_explanatory_variables(x1, y1, "NMR")
 
-    overlay_individuals_over_global(x1, y1)
+    overlay_individuals_over_global(x1, y1, data_type="NMR")
 
     supervised(x1, y1, [a for a in attributes if a in palettes])
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
@@ -57,7 +57,10 @@ def main(cli: tp.Sequence[str] = None) -> int:
     x2, y2 = get_x_y_flow()
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
 
+    # unsupervised(x1, y, attributes, data_type="NMR", suffix="_strict")
+    # overlay_individuals_over_global(x1, y, data_type="NMR", suffix="_strict")
     unsupervised(x2, y, attributes, data_type="flow_cytometry")
+    overlay_individuals_over_global(x2, y, data_type="flow_cytometry")
 
     # Fin
     return 0
@@ -78,30 +81,26 @@ def get_x_y_flow() -> tp.Tuple[DataFrame, DataFrame]:
 
     y2 = pd.read_parquet(project_dir / "metadata" / "annotation.pq")
     x2 = pd.read_parquet(project_dir / "data" / "matrix_imputed.pq")
+    y2["date_sample"] = y2["datesamples"]
 
     return x2, y2
 
 
-def get_matched_nmr_and_flow(x1, y1, x2, y2) -> tp.Tuple[DataFrame, DataFrame, DataFrame]:
+def get_matched_nmr_and_flow(
+    x1: DataFrame, y1: DataFrame, x2: DataFrame, y2: DataFrame
+) -> tp.Tuple[DataFrame, DataFrame, DataFrame]:
     """
     Get flow cytometry dataset aligned with the NMR one.
     """
-    x2["patient_code"] = (
-        y2["patient_code"].str.extract(r"P(\d+)")[0].astype(int).astype(str)
-    )
-    x2["date_sample"] = y2["datesamples"].astype(str)
-
-    id_cols = ["patient_code", "date_sample"]
-
     joined = (
-        x1.join(y1[id_cols].astype(str))
+        x1.join(y1["accession"])
         .reset_index()
-        .merge(x2, on=id_cols, how="inner")
+        .merge(x2.join(y2["accession"]), on="accession", how="inner")
         .set_index("Sample_id")
     )
 
     nx1 = joined.loc[:, x1.columns]
-    nx2 = joined.loc[:, x2.columns.drop(id_cols)]
+    nx2 = joined.loc[:, x2.columns]
     ny = y1.reindex(nx1.index)
 
     return nx1, nx2, ny
@@ -353,6 +352,54 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
     y["alive"] = pd.Categorical(y["alive"], ordered=True, categories=["alive", "dead"])
     y["date_sample"] = pd.to_datetime(y["date_sample"])
     y["patient_code"] = y["patient_code"].astype(pd.Int64Dtype())
+    q = y["accession"].str.strip().str.extract(r"P20-(\d+)")[0]
+    y["accession"] = "P020-" + q.str.zfill(3)
+    y["days_symptoms_before_admission"] = (
+        y["days_of_symptoms_preceding_admission"]
+        .replace("no admission", np.nan)
+        .fillna(-1)
+        .astype(int)
+        .astype(pd.Int64Dtype())
+        .replace(-1, np.nan)
+    )
+    y["days_since_hospitalization"] = (
+        y["days_bw_hospitalization_and_sample"]
+        .replace("not admitted", np.nan)
+        .fillna(-1)
+        .astype(int)
+        .astype(pd.Int64Dtype())
+        .replace(-1, np.nan)
+    )
+    y["days_since_symptoms"] = (
+        y["days_BW_start_of_covid_symptom_and_sample"]
+        .replace(">90", 90)
+        .fillna(-1)
+        .astype(int)
+        .astype(pd.Int64Dtype())
+        .replace(-1, np.nan)
+    )
+
+    ## labs
+    labs = [
+        "total_bilirubin",
+        "ALT",
+        "AST",
+        "creatinine",
+        "CRP",
+        "hemoglobin",
+        "hematocrit",
+        "LDH",
+        "RDWCV",
+        "MCV",
+    ]
+    to_repl = {"not done": np.nan, "<0.4": 0.0, ">32": 32.0}
+    for col in labs:
+        y[col] = y[col].replace(to_repl).astype(str).str.replace(",", ".").astype(float)
+
+    ## treatments
+    treats = ["HCQ", "Remdesivir", "tosilizumab", "Steroids"]
+    for treat in treats:
+        y[treat] = pd.Categorical(y[treat], ordered=True, categories=["no", "yes"])
 
     # reorder columns
     y = y.reindex(
@@ -520,6 +567,7 @@ def unsupervised(
     y: DataFrame,
     attributes: tp.Sequence[str] = None,
     data_type: str = "NMR",
+    suffix: str = "",
 ) -> None:
     """
     Unsupervised analysis of data using sample/feature correlations and
@@ -528,7 +576,7 @@ def unsupervised(
     if attributes is None:
         attributes = list()
 
-    output_dir = (results_dir / f"unsupervised_{data_type}").mkdir()
+    output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
 
     feature_annotation = get_feature_annotations(x, data_type=data_type)
     feature_annotation = feature_annotation.drop(
@@ -1081,11 +1129,11 @@ def diffusion(x, y) -> None:
     a.uns["dpt_changepoints"] = np.ones(a.obs["dpt_order_indices"].shape[0] - 1)
 
 
-def get_explanatory_variables(x, y) -> None:
+def get_explanatory_variables(x, y, data_type: str) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.
     """
-    output_dir = (results_dir / "unsupervised").mkdir()
+    output_dir = (results_dir / f"unsupervised_{data_type}").mkdir()
 
     res = pd.DataFrame(
         SpectralEmbedding().fit_transform(z_score(x)),
@@ -1175,7 +1223,9 @@ def get_explanatory_variables(x, y) -> None:
     )
 
 
-def overlay_individuals_over_global(x, y) -> None:
+def overlay_individuals_over_global(
+    x: DataFrame, y: DataFrame, data_type: str, suffix: str = ""
+) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.
     """
@@ -1192,7 +1242,7 @@ def overlay_individuals_over_global(x, y) -> None:
     from scipy.spatial.distance import euclidean, pdist, squareform
     from scipy import interpolate
 
-    output_dir = (results_dir / "unsupervised").mkdir()
+    output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
 
     _joint_metrics = list()
     for model, pkwargs, mkwargs in [
@@ -1755,7 +1805,7 @@ def _plot_projection(
                 m = ax.scatter(
                     x_df.loc[:, pc],
                     x_df.loc[:, pc + 1],
-                    c=y_df[factor],
+                    c=y_df[factor].astype(float),
                     cmap=cmaps.get(factor),
                 )
                 if pc == 0:
