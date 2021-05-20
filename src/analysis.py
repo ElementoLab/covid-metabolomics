@@ -106,11 +106,10 @@ def get_matched_nmr_and_flow(
     return nx1, nx2, ny
 
 
-def integrate_nmr_flow():
+def integrate_nmr_flow() -> None:
     """
     Integrate the two data types on common ground
     """
-    # from sklearn.cross_decomposition import CCA
     import rcca  # type: ignore[import]
 
     output_dir = results_dir / "nmr_flow_integration"
@@ -121,44 +120,63 @@ def integrate_nmr_flow():
 
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
 
+    xz1 = z_score(x1)
+    xz2 = z_score(x2)
+
     # # Vanilla sklearn (doesn't work well)
-    # cca = CCA()
-    # cca.fit(x1, x2)
-    # x1_cca, x2_cca = cca.transform(x1, x2)
+    # from sklearn.cross_decomposition import CCA
+    # n_comp = 2
+    # cca = CCA(n_components=n_comp)
+    # cca.fit(xz1, xz2)
+    # x1_cca, x2_cca = cca.transform(xz1, xz2)
     # x1_cca = pd.DataFrame(x1_cca, index=x1.index)
     # x2_cca = pd.DataFrame(x2_cca, index=x2.index)
 
-    # fig, ax = plt.subplots(figsize=(3, 3))
-    # for df, label in [(x1_cca, "NMR"), (x2_cca, "Flow cytometry")]:
-    #     ax.scatter(
-    #         *df.values[:, :2].T,
-    #         c=y.WHO_score_sample.cat.codes,
-    #         cmap="coolwarm",
-    #         label=label,
-    #         alpha=0.5,
-    #         s=2.5,
-    #     )
+    # o = output_dir / f"CCA_integration.default"
+    # metrics = assess_integration(
+    #     a=x1_cca,
+    #     b=x2_cca,
+    #     a_meta=y,
+    #     b_meta=y,
+    #     a_name="NMR",
+    #     b_name="Flow cytometry",
+    #     output_prefix=o,
+    #     algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
+    #     attributes=[
+    #         "dataset",
+    #         "group",
+    #         "hospitalized",
+    #         "WHO_score_sample",
+    #         "patient_code",
+    #     ],
+    #     plot=True,
+    #     algo_kwargs=dict(umap=dict(gamma=25)),
+    #     plt_kwargs=dict(s=100),
+    #     cmaps=["Set1", "Set2", "Dark2", "inferno", None],
+    # )
 
     # CCA with CV and regularization (very good)
-    ccaCV = rcca.CCACrossValidate(
-        kernelcca=False,
-        numCCs=[2, 3, 4, 5, 6, 8, 12, 16, 20, 24],
-        regs=[0.1, 0.5, 1.0, 2, 10, 100, 1_000, 10_000, 100_000, 1_000_000],
-    )
-    ccaCV.train([z_score(x1).values, z_score(x2).values])
+    model_f = output_dir / "trained_model_CV.hdf5"
+    numCCs = [4, 5, 6, 7, 8]
+    regs = [10, 50, 70, 80, 90, 100, 150, 200, 300, 400, 500, 1_000]
+
+    ccaCV = rcca.CCACrossValidate(kernelcca=False, numCCs=numCCs, regs=regs)
+    if not model_f.exists():
+        # # N.B.: this is not deterministic and I didn't find a way to set a seed of equivalent.
+        # # By saving/loading the model I ensure the results are reproducible
+        # # but I don't think that says anything about how correct they are.
+        ccaCV.train([xz1.values, xz2.values])
+        ccaCV.save(model_f)
+    ccaCV.load(model_f)
+
     n_comp = ccaCV.best_numCC
     reg = ccaCV.best_reg
     print(n_comp, reg)
     x1_cca = pd.DataFrame(ccaCV.comps[0], index=x1.index)
     x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
 
-    # cca = rcca.CCA(reg=0.1, numCC=8)
-    # cca.train([z_score(x1).values, z_score(x2).values])
-    # x1_cca = pd.DataFrame(cca.comps[0], index=x1.index)
-    # x2_cca = pd.DataFrame(cca.comps[1], index=x2.index)
-
     o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
-    assess_integration(
+    metrics = assess_integration(
         a=x1_cca,
         b=x2_cca,
         a_meta=y,
@@ -166,22 +184,59 @@ def integrate_nmr_flow():
         a_name="NMR",
         b_name="Flow cytometry",
         output_prefix=o,
-        algos=["cca", "pca", "umap"],
-        attributes=["dataset", "group", "WHO_score_sample", "patient_code"],
+        algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
+        attributes=[
+            "dataset",
+            "group",
+            "hospitalized",
+            "WHO_score_sample",
+            "patient_code",
+        ],
         plot=True,
         algo_kwargs=dict(umap=dict(gamma=25)),
+        plt_kwargs=dict(s=100),
+        cmaps=["Set1", "Set2", "Dark2", "inferno", None],
     )
+    pd.DataFrame(metrics)
 
-    # fig, ax = plt.subplots(figsize=(3, 3))
-    # for df, label in [(x1_cca, "NMR"), (x2_cca, "Flow cytometry")]:
-    #     ax.scatter(
-    #         *df.values[:, :2].T,
-    #         c=y["WHO_score_sample"].cat.codes,
-    #         cmap="coolwarm",
-    #         label=label,
-    #         alpha=0.5,
-    #         s=2.5,
-    #     )
+    # Plot in light of attributes
+    x_comb = pd.concat(
+        [
+            pd.DataFrame(x1_cca.values, index=x1_cca.index + "_NMR"),
+            pd.DataFrame(x2_cca.values, index=x2_cca.index + "_Flow"),
+        ]
+    )
+    y_comb = pd.concat([y.assign(dataset="NMR"), y.assign(dataset="flow_cytometry")])
+    y_comb.index = x_comb.index
+
+    fig = plot_projection(x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5)
+    fig.savefig(
+        output_dir / "rCCA_integration.all_CCs.attributes.scatter.svg",
+        **figkws,
+    )
+    plt.close(fig)
+
+    # Predict other data type for each one
+    w1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
+    w2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
+
+    o1 = z_score(x1_cca @ w2.T)
+    o2 = z_score(x2_cca @ w1.T)
+
+    unsupervised(
+        o1,
+        y,
+        attributes=attributes,
+        data_type="flow_cytometry",
+        suffix="_predicted_from_NMR",
+    )
+    unsupervised(
+        o2,
+        y,
+        attributes=attributes,
+        data_type="NMR",
+        suffix="_predicted_from_flow_cytometry",
+    )
 
 
 def assess_integration(
@@ -199,12 +254,14 @@ def assess_integration(
     plot: bool = True,
     algo_kwargs: tp.Dict[str, tp.Dict[str, tp.Any]] = None,
     plt_kwargs: tp.Dict[str, tp.Any] = None,
+    cmaps: tp.Sequence[str] = None,
 ) -> tp.Dict[str, tp.Dict[str, float]]:
     """
     Keyword arguments are passed to the scanpy plotting function.
     """
     from sklearn.metrics import silhouette_score
     from imc.graphics import rasterize_scanpy
+    from seaborn_extensions.annotated_clustermap import is_numeric
 
     if plot:
         assert output_prefix is not None, "If `plot`, `output_prefix` must be given."
@@ -221,7 +278,7 @@ def assess_integration(
     if isinstance(b_meta, pd.Series):
         b_meta = b_meta.to_frame()
 
-    # Silence scanpy's index str conversion
+    # TODO: silence scanpy's index str conversion
     adata = AnnData(a.append(b))
     adata.obs["dataset"] = [a_name] * a.shape[0] + [b_name] * b.shape[0]
     for attr in attributes:
@@ -279,11 +336,26 @@ def assess_integration(
     adata = adata[adata.obs.sample(frac=1).index, :]
     n, m = len(algos), len(attributes)
     fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), squeeze=False)
+    cmaps = ([None] * len(attributes)) if cmaps is None else cmaps
     for i, algo in enumerate(algos):
-        for j, attr in enumerate(attributes):
+        for j, (attr, cmap) in enumerate(zip(attributes, cmaps)):
+            try:
+                if is_numeric(a_meta[attr]):
+                    cmap_kws = dict(color_map=cmap)
+                else:
+                    cmap_kws = dict(palette=cmap)
+            except KeyError:
+                cmap_kws = {}
             ax = axes[i, j]
             sc.pl.embedding(
-                adata, basis=algo, color=attr, alpha=0.5, show=False, **plt_kwargs, ax=ax
+                adata,
+                basis=algo,
+                color=attr,
+                alpha=0.5,
+                show=False,
+                **plt_kwargs,
+                **cmap_kws,
+                ax=ax,
             )
             s = scores[algo][attr]
             ax.set(
@@ -437,6 +509,18 @@ def get_flow_feature_annotations(x):
     return feature_annotation
 
 
+def plot_all_signatures():
+    from src.ukbb import get_signatures as ukbbsigs
+    from src.dierckx import get_signatures as dierckxsigs
+
+    ukbb_sigs = ukbbsigs().sort_index()
+    dierckx_sigs = dierckxsigs().sort_index()
+
+    p = ukbb_sigs.join(dierckx_sigs).drop("future_infectious_disease", 1).dropna()
+
+    clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
+
+
 def get_nmr_feature_annotations() -> DataFrame:
     """
     Annotate NMR features with broad category and some basic physical properties.
@@ -580,7 +664,7 @@ def unsupervised(
 
     feature_annotation = get_feature_annotations(x, data_type=data_type)
     feature_annotation = feature_annotation.drop(
-        ["abbreviation", "name", "description", "subgroup"], axis=1
+        ["abbreviation", "name", "description", "subgroup"], axis=1, errors="ignore"
     )
 
     ## Clustermaps
@@ -637,7 +721,7 @@ def unsupervised(
             except ValueError:
                 continue
 
-            fig = _plot_projection(res, y, factors=attributes, algo_name=name, **pkwargs)
+            fig = plot_projection(res, y, factors=attributes, algo_name=name, **pkwargs)
 
             fig.savefig(
                 output_dir / f"unsupervised.dimres.{name}.{label}svg",
@@ -1760,7 +1844,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         )
 
 
-def _plot_projection(
+def plot_projection(
     x_df: DataFrame,
     y_df: DataFrame,
     factors: tp.Sequence[str],

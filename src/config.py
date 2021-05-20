@@ -72,6 +72,7 @@ attributes = [
     "WHO_score_patient",
     "alive",
     "days_since_symptoms",
+    "days_since_hospitalization",
 ]
 
 palettes = dict(
@@ -84,7 +85,12 @@ palettes = dict(
     WHO_score_patient=sns.color_palette("inferno", 9),
     alive=sns.color_palette("Dark2")[:2],
 )
-cmaps = dict(age="winter_r", bmi="copper")
+cmaps = dict(
+    age="winter_r",
+    bmi="copper",
+    days_since_symptoms="cividis",
+    days_since_hospitalization="cividis",
+)
 
 _q = np.random.choice(range(40), 40, replace=False)
 tab40 = matplotlib.colors.ListedColormap(
