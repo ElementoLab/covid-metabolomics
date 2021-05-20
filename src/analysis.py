@@ -62,6 +62,11 @@ def main(cli: tp.Sequence[str] = None) -> int:
     unsupervised(x2, y, attributes, data_type="flow_cytometry")
     overlay_individuals_over_global(x2, y, data_type="flow_cytometry")
 
+    # Joint data types
+    # # See how variables relate to each other
+    cross_data_type_predictions()
+    # # Develop common latent space
+    integrate_nmr_flow()
     # Fin
     return 0
 
@@ -70,304 +75,6 @@ def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--overwrite", action="store_true")
     return parser
-
-
-def get_x_y_flow() -> tp.Tuple[DataFrame, DataFrame]:
-    """
-    Get flow cytometry dataset and its metadata.
-    """
-    projects_dir = Path("~/projects/archive").expanduser()
-    project_dir = projects_dir / "covid-flowcyto"
-
-    y2 = pd.read_parquet(project_dir / "metadata" / "annotation.pq")
-    x2 = pd.read_parquet(project_dir / "data" / "matrix_imputed.pq")
-    y2["date_sample"] = y2["datesamples"]
-
-    return x2, y2
-
-
-def get_matched_nmr_and_flow(
-    x1: DataFrame, y1: DataFrame, x2: DataFrame, y2: DataFrame
-) -> tp.Tuple[DataFrame, DataFrame, DataFrame]:
-    """
-    Get flow cytometry dataset aligned with the NMR one.
-    """
-    joined = (
-        x1.join(y1["accession"])
-        .reset_index()
-        .merge(x2.join(y2["accession"]), on="accession", how="inner")
-        .set_index("Sample_id")
-    )
-
-    nx1 = joined.loc[:, x1.columns]
-    nx2 = joined.loc[:, x2.columns]
-    ny = y1.reindex(nx1.index)
-
-    return nx1, nx2, ny
-
-
-def integrate_nmr_flow() -> None:
-    """
-    Integrate the two data types on common ground
-    """
-    import rcca  # type: ignore[import]
-
-    output_dir = results_dir / "nmr_flow_integration"
-    output_dir.mkdir()
-
-    x1, y1 = get_x_y_nmr()
-    x2, y2 = get_x_y_flow()
-
-    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
-
-    xz1 = z_score(x1)
-    xz2 = z_score(x2)
-
-    # # Vanilla sklearn (doesn't work well)
-    # from sklearn.cross_decomposition import CCA
-    # n_comp = 2
-    # cca = CCA(n_components=n_comp)
-    # cca.fit(xz1, xz2)
-    # x1_cca, x2_cca = cca.transform(xz1, xz2)
-    # x1_cca = pd.DataFrame(x1_cca, index=x1.index)
-    # x2_cca = pd.DataFrame(x2_cca, index=x2.index)
-
-    # o = output_dir / f"CCA_integration.default"
-    # metrics = assess_integration(
-    #     a=x1_cca,
-    #     b=x2_cca,
-    #     a_meta=y,
-    #     b_meta=y,
-    #     a_name="NMR",
-    #     b_name="Flow cytometry",
-    #     output_prefix=o,
-    #     algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
-    #     attributes=[
-    #         "dataset",
-    #         "group",
-    #         "hospitalized",
-    #         "WHO_score_sample",
-    #         "patient_code",
-    #     ],
-    #     plot=True,
-    #     algo_kwargs=dict(umap=dict(gamma=25)),
-    #     plt_kwargs=dict(s=100),
-    #     cmaps=["Set1", "Set2", "Dark2", "inferno", None],
-    # )
-
-    # CCA with CV and regularization (very good)
-    model_f = output_dir / "trained_model_CV.hdf5"
-    numCCs = [4, 5, 6, 7, 8]
-    regs = [10, 50, 70, 80, 90, 100, 150, 200, 300, 400, 500, 1_000]
-
-    ccaCV = rcca.CCACrossValidate(kernelcca=False, numCCs=numCCs, regs=regs)
-    if not model_f.exists():
-        # # N.B.: this is not deterministic and I didn't find a way to set a seed of equivalent.
-        # # By saving/loading the model I ensure the results are reproducible
-        # # but I don't think that says anything about how correct they are.
-        ccaCV.train([xz1.values, xz2.values])
-        ccaCV.save(model_f)
-    ccaCV.load(model_f)
-
-    n_comp = ccaCV.best_numCC
-    reg = ccaCV.best_reg
-    print(n_comp, reg)
-    x1_cca = pd.DataFrame(ccaCV.comps[0], index=x1.index)
-    x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
-
-    o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
-    metrics = assess_integration(
-        a=x1_cca,
-        b=x2_cca,
-        a_meta=y,
-        b_meta=y,
-        a_name="NMR",
-        b_name="Flow cytometry",
-        output_prefix=o,
-        algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
-        attributes=[
-            "dataset",
-            "group",
-            "hospitalized",
-            "WHO_score_sample",
-            "patient_code",
-        ],
-        plot=True,
-        algo_kwargs=dict(umap=dict(gamma=25)),
-        plt_kwargs=dict(s=100),
-        cmaps=["Set1", "Set2", "Dark2", "inferno", None],
-    )
-    pd.DataFrame(metrics)
-
-    # Plot in light of attributes
-    x_comb = pd.concat(
-        [
-            pd.DataFrame(x1_cca.values, index=x1_cca.index + "_NMR"),
-            pd.DataFrame(x2_cca.values, index=x2_cca.index + "_Flow"),
-        ]
-    )
-    y_comb = pd.concat([y.assign(dataset="NMR"), y.assign(dataset="flow_cytometry")])
-    y_comb.index = x_comb.index
-
-    fig = plot_projection(x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5)
-    fig.savefig(
-        output_dir / "rCCA_integration.all_CCs.attributes.scatter.svg",
-        **figkws,
-    )
-    plt.close(fig)
-
-    # Predict other data type for each one
-    w1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
-    w2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
-
-    o1 = z_score(x1_cca @ w2.T)
-    o2 = z_score(x2_cca @ w1.T)
-
-    unsupervised(
-        o1,
-        y,
-        attributes=attributes,
-        data_type="flow_cytometry",
-        suffix="_predicted_from_NMR",
-    )
-    unsupervised(
-        o2,
-        y,
-        attributes=attributes,
-        data_type="NMR",
-        suffix="_predicted_from_flow_cytometry",
-    )
-
-
-def assess_integration(
-    a: DataFrame,
-    b: DataFrame,
-    a_meta: tp.Union[Series, DataFrame],
-    b_meta: tp.Union[Series, DataFrame],
-    output_prefix: Path = None,
-    a_name: str = "IMC",
-    b_name: str = "RNA",
-    algos: tp.Sequence[str] = ["pca", "umap"],
-    attributes: tp.Sequence[str] = ["dataset"],
-    only_matched_attributes: bool = False,
-    subsample: str = None,
-    plot: bool = True,
-    algo_kwargs: tp.Dict[str, tp.Dict[str, tp.Any]] = None,
-    plt_kwargs: tp.Dict[str, tp.Any] = None,
-    cmaps: tp.Sequence[str] = None,
-) -> tp.Dict[str, tp.Dict[str, float]]:
-    """
-    Keyword arguments are passed to the scanpy plotting function.
-    """
-    from sklearn.metrics import silhouette_score
-    from imc.graphics import rasterize_scanpy
-    from seaborn_extensions.annotated_clustermap import is_numeric
-
-    if plot:
-        assert output_prefix is not None, "If `plot`, `output_prefix` must be given."
-    if algo_kwargs is None:
-        algo_kwargs = dict()
-    for algo in algos:
-        if algo not in algo_kwargs:
-            algo_kwargs[algo] = dict()
-    if plt_kwargs is None:
-        plt_kwargs = dict()
-
-    if isinstance(a_meta, pd.Series):
-        a_meta = a_meta.to_frame()
-    if isinstance(b_meta, pd.Series):
-        b_meta = b_meta.to_frame()
-
-    # TODO: silence scanpy's index str conversion
-    adata = AnnData(a.append(b))
-    adata.obs["dataset"] = [a_name] * a.shape[0] + [b_name] * b.shape[0]
-    for attr in attributes:
-        if attr == "dataset":
-            continue
-        adata.obs[attr] = "None"
-        adata.obs.loc[adata.obs["dataset"] == a_name, attr] = a_meta[attr]
-        adata.obs.loc[adata.obs["dataset"] == b_name, attr] = b_meta[attr]
-    adata.obs_names_make_unique()
-
-    if "pca" in algos:
-        sc.pp.scale(adata)
-        sc.pp.pca(adata, **algo_kwargs["pca"])
-
-    if "umap" in algos:
-        if subsample is not None:
-            if "frac=" in subsample:
-                sel_cells = adata.obs.sample(
-                    frac=float(subsample.split("frac=")[1])
-                ).index
-            elif "n=" in subsample:
-                sel_cells = adata.obs.sample(n=int(subsample.split("n=")[1])).index
-            adata = adata[sel_cells]
-        sc.pp.neighbors(adata)
-        sc.tl.umap(adata, **algo_kwargs["umap"])
-        # sc.tl.leiden(a, resolution=0.5)
-
-    remain = [x for x in algos if x not in ["pca", "umap"]]
-    if remain:
-        assert len(remain) == 1
-        algo = remain[0]
-        adata.obsm[f"X_{algo}"] = adata.X
-
-    # get score only for matching attributes across datasets
-    if only_matched_attributes:
-        attrs = [attr for attr in attributes if attr != "dataset"]
-        sel = adata.obs.groupby(attrs)["dataset"].nunique() >= 2
-        sel = sel.reset_index().drop("dataset", 1)
-        adata = adata[
-            pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :
-        ]
-
-    scores: tp.Dict[str, tp.Dict[str, float]] = dict()
-    for i, algo in enumerate(algos):
-        scores[algo] = dict()
-        for j, attr in enumerate(attributes):
-            scores[algo][attr] = silhouette_score(
-                adata.obsm[f"X_{algo}"], adata.obs[attr]
-            )
-
-    if not plot:
-        return scores
-
-    # Plot
-    adata = adata[adata.obs.sample(frac=1).index, :]
-    n, m = len(algos), len(attributes)
-    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), squeeze=False)
-    cmaps = ([None] * len(attributes)) if cmaps is None else cmaps
-    for i, algo in enumerate(algos):
-        for j, (attr, cmap) in enumerate(zip(attributes, cmaps)):
-            try:
-                if is_numeric(a_meta[attr]):
-                    cmap_kws = dict(color_map=cmap)
-                else:
-                    cmap_kws = dict(palette=cmap)
-            except KeyError:
-                cmap_kws = {}
-            ax = axes[i, j]
-            sc.pl.embedding(
-                adata,
-                basis=algo,
-                color=attr,
-                alpha=0.5,
-                show=False,
-                **plt_kwargs,
-                **cmap_kws,
-                ax=ax,
-            )
-            s = scores[algo][attr]
-            ax.set(
-                title=f"{attr}, score: {s:.3f}",
-                xlabel=algo.upper() + "1",
-                ylabel=algo.upper() + "2",
-            )
-    rasterize_scanpy(fig)
-    fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.svg", **figkws)
-    plt.close(fig)
-
-    return scores
 
 
 def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
@@ -1949,6 +1656,380 @@ def score_signature(x: DataFrame, diff: Series):
         -(xz[up].mean(axis=1) * (float(up.size) / n))
         + (xz[down].mean(axis=1) * (float(down.size) / n))
     ).rename("signature_score")
+    return scores
+
+
+def get_x_y_flow() -> tp.Tuple[DataFrame, DataFrame]:
+    """
+    Get flow cytometry dataset and its metadata.
+    """
+    projects_dir = Path("~/projects/archive").expanduser()
+    project_dir = projects_dir / "covid-flowcyto"
+
+    y2 = pd.read_parquet(project_dir / "metadata" / "annotation.pq")
+    x2 = pd.read_parquet(project_dir / "data" / "matrix_imputed.pq")
+    y2["date_sample"] = y2["datesamples"]
+
+    return x2, y2
+
+
+def get_matched_nmr_and_flow(
+    x1: DataFrame, y1: DataFrame, x2: DataFrame, y2: DataFrame
+) -> tp.Tuple[DataFrame, DataFrame, DataFrame]:
+    """
+    Get flow cytometry dataset aligned with the NMR one.
+    """
+    joined = (
+        x1.join(y1["accession"])
+        .reset_index()
+        .merge(x2.join(y2["accession"]), on="accession", how="inner")
+        .set_index("Sample_id")
+    )
+
+    nx1 = joined.loc[:, x1.columns]
+    nx2 = joined.loc[:, x2.columns]
+    ny = y1.reindex(nx1.index)
+
+    return nx1, nx2, ny
+
+
+def cross_data_type_predictions() -> None:
+    """
+    Integrate the two data types on common ground
+    """
+    import sklearn
+
+    output_dir = results_dir / "nmr_flow_predictions"
+    output_dir.mkdir()
+
+    x1, y1 = get_x_y_nmr()
+    x2, y2 = get_x_y_flow()
+    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+    xz1 = z_score(x1)
+    xz2 = z_score(x2)
+
+    model = sklearn.linear_model.Ridge()
+    model.fit(xz1, xz2)
+
+    coefs = pd.DataFrame(model.coef_, index=xz2.columns, columns=xz1.columns)
+    coefs = coefs.rename_axis(index="Immune populations", columns="Metabolites")
+    coefs = coefs.loc[coefs.sum(1) > 0, :]
+    coefs = coefs.loc[:, coefs.sum(0) > 0]
+
+    grid = clustermap(
+        coefs,
+        center=0,
+        cmap="RdBu_r",
+        metric="correlation",
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+    )
+    grid.savefig(
+        output_dir / "coefficients.all_variables.clustermap.svg",
+        **figkws,
+    )
+    plt.close(grid.fig)
+
+    x1var = ((coefs.var(0) / coefs.mean(0)) ** 2).sort_values()
+    x2var = ((coefs.var(1) / coefs.mean(1)) ** 2).sort_values()
+
+    x1var = (coefs.abs().sum(0)).sort_values()
+    x2var = (coefs.abs().sum(1)).sort_values()
+
+    n = 30
+    grid = clustermap(
+        coefs.loc[x2var.index[-n:], x1var.index[-n:]],
+        center=0,
+        cmap="RdBu_r",
+        xticklabels=True,
+        yticklabels=True,
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+    )
+    grid.savefig(
+        output_dir / "coefficients.top_variables.clustermap.svg",
+        **figkws,
+    )
+    plt.close(grid.fig)
+
+
+def integrate_nmr_flow() -> None:
+    """
+    Integrate the two data types on common ground
+    """
+    import rcca  # type: ignore[import]
+
+    output_dir = results_dir / "nmr_flow_integration"
+    output_dir.mkdir()
+
+    x1, y1 = get_x_y_nmr()
+    x2, y2 = get_x_y_flow()
+
+    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+
+    xz1 = z_score(x1)
+    xz2 = z_score(x2)
+
+    # # Vanilla sklearn (doesn't work well)
+    # from sklearn.cross_decomposition import CCA
+    # n_comp = 2
+    # cca = CCA(n_components=n_comp)
+    # cca.fit(xz1, xz2)
+    # x1_cca, x2_cca = cca.transform(xz1, xz2)
+    # x1_cca = pd.DataFrame(x1_cca, index=x1.index)
+    # x2_cca = pd.DataFrame(x2_cca, index=x2.index)
+
+    # o = output_dir / f"CCA_integration.default"
+    # metrics = assess_integration(
+    #     a=x1_cca,
+    #     b=x2_cca,
+    #     a_meta=y,
+    #     b_meta=y,
+    #     a_name="NMR",
+    #     b_name="Flow cytometry",
+    #     output_prefix=o,
+    #     algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
+    #     attributes=[
+    #         "dataset",
+    #         "group",
+    #         "hospitalized",
+    #         "WHO_score_sample",
+    #         "patient_code",
+    #     ],
+    #     plot=True,
+    #     algo_kwargs=dict(umap=dict(gamma=25)),
+    #     plt_kwargs=dict(s=100),
+    #     cmaps=["Set1", "Set2", "Dark2", "inferno", None],
+    # )
+
+    # CCA with CV and regularization (very good)
+    model_f = output_dir / "trained_model_CV.hdf5"
+    numCCs = [4, 5, 6, 7, 8]
+    regs = [10, 50, 70, 80, 90, 100, 150, 200, 300, 400, 500, 1_000]
+
+    ccaCV = rcca.CCACrossValidate(kernelcca=False, numCCs=numCCs, regs=regs)
+    if not model_f.exists():
+        # # N.B.: this is not deterministic and I didn't find a way to set a seed of equivalent.
+        # # By saving/loading the model I ensure the results are reproducible
+        # # but I don't think that says anything about how correct they are.
+        ccaCV.train([xz1.values, xz2.values])
+        ccaCV.save(model_f)
+    ccaCV.load(model_f)
+
+    n_comp = ccaCV.best_numCC
+    reg = ccaCV.best_reg
+    print(n_comp, reg)
+    x1_cca = pd.DataFrame(ccaCV.comps[0], index=x1.index)
+    x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
+
+    o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
+    metrics = assess_integration(
+        a=x1_cca,
+        b=x2_cca,
+        a_meta=y,
+        b_meta=y,
+        a_name="NMR",
+        b_name="Flow cytometry",
+        output_prefix=o,
+        algos=["cca", "pca", "umap"] if n_comp > 2 else ["cca"],
+        attributes=[
+            "dataset",
+            "group",
+            "hospitalized",
+            "WHO_score_sample",
+            "patient_code",
+        ],
+        plot=True,
+        algo_kwargs=dict(umap=dict(gamma=25)),
+        plt_kwargs=dict(s=100),
+        cmaps=["Set1", "Set2", "Dark2", "inferno", None],
+    )
+    pd.DataFrame(metrics)
+
+    # Plot in light of attributes
+    x_comb = pd.concat(
+        [
+            pd.DataFrame(x1_cca.values, index=x1_cca.index + "_NMR"),
+            pd.DataFrame(x2_cca.values, index=x2_cca.index + "_Flow"),
+        ]
+    )
+    y_comb = pd.concat([y.assign(dataset="NMR"), y.assign(dataset="flow_cytometry")])
+    y_comb.index = x_comb.index
+
+    fig = plot_projection(x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5)
+    fig.savefig(
+        output_dir / "rCCA_integration.all_CCs.attributes.scatter.svg",
+        **figkws,
+    )
+    plt.close(fig)
+
+    # Predict other data type for each one
+    w1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
+    w2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
+
+    n = 10
+    f1 = w1[0].abs().sort_values().tail(n + 1).index[::-1]
+    f2 = w2[0].abs().sort_values().tail(n + 1).index[::-1]
+
+    fig, axes = plt.subplots(2, n, figsize=(3 * n, 3 * 2))
+    for rank in range(n):
+        axes[0, rank].scatter(x1_cca[0], x1[f1[rank]], alpha=0.5, s=5)
+        axes[0, rank].set(xlabel="CCA1", ylabel=f1[rank])
+        axes[1, rank].scatter(x2_cca[0], x2[f2[rank]], alpha=0.5, s=5)
+        axes[1, rank].set(xlabel="CCA1", ylabel=f2[rank])
+    fig.savefig(
+        output_dir / "rCCA_integration.CC1.top_variables.scatter.svg",
+        **figkws,
+    )
+    plt.close(fig)
+
+    o1 = z_score(x1_cca @ w2.T)
+    o2 = z_score(x2_cca @ w1.T)
+
+    unsupervised(
+        o1,
+        y,
+        attributes=attributes,
+        data_type="flow_cytometry",
+        suffix="_predicted_from_NMR",
+    )
+    unsupervised(
+        o2,
+        y,
+        attributes=attributes,
+        data_type="NMR",
+        suffix="_predicted_from_flow_cytometry",
+    )
+
+
+def assess_integration(
+    a: DataFrame,
+    b: DataFrame,
+    a_meta: tp.Union[Series, DataFrame],
+    b_meta: tp.Union[Series, DataFrame],
+    output_prefix: Path = None,
+    a_name: str = "IMC",
+    b_name: str = "RNA",
+    algos: tp.Sequence[str] = ["pca", "umap"],
+    attributes: tp.Sequence[str] = ["dataset"],
+    only_matched_attributes: bool = False,
+    subsample: str = None,
+    plot: bool = True,
+    algo_kwargs: tp.Dict[str, tp.Dict[str, tp.Any]] = None,
+    plt_kwargs: tp.Dict[str, tp.Any] = None,
+    cmaps: tp.Sequence[str] = None,
+) -> tp.Dict[str, tp.Dict[str, float]]:
+    """
+    Keyword arguments are passed to the scanpy plotting function.
+    """
+    from sklearn.metrics import silhouette_score
+    from imc.graphics import rasterize_scanpy
+    from seaborn_extensions.annotated_clustermap import is_numeric
+
+    if plot:
+        assert output_prefix is not None, "If `plot`, `output_prefix` must be given."
+    if algo_kwargs is None:
+        algo_kwargs = dict()
+    for algo in algos:
+        if algo not in algo_kwargs:
+            algo_kwargs[algo] = dict()
+    if plt_kwargs is None:
+        plt_kwargs = dict()
+
+    if isinstance(a_meta, pd.Series):
+        a_meta = a_meta.to_frame()
+    if isinstance(b_meta, pd.Series):
+        b_meta = b_meta.to_frame()
+
+    # TODO: silence scanpy's index str conversion
+    adata = AnnData(a.append(b))
+    adata.obs["dataset"] = [a_name] * a.shape[0] + [b_name] * b.shape[0]
+    for attr in attributes:
+        if attr == "dataset":
+            continue
+        adata.obs[attr] = "None"
+        adata.obs.loc[adata.obs["dataset"] == a_name, attr] = a_meta[attr]
+        adata.obs.loc[adata.obs["dataset"] == b_name, attr] = b_meta[attr]
+    adata.obs_names_make_unique()
+
+    if "pca" in algos:
+        sc.pp.scale(adata)
+        sc.pp.pca(adata, **algo_kwargs["pca"])
+
+    if "umap" in algos:
+        if subsample is not None:
+            if "frac=" in subsample:
+                sel_cells = adata.obs.sample(
+                    frac=float(subsample.split("frac=")[1])
+                ).index
+            elif "n=" in subsample:
+                sel_cells = adata.obs.sample(n=int(subsample.split("n=")[1])).index
+            adata = adata[sel_cells]
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata, **algo_kwargs["umap"])
+        # sc.tl.leiden(a, resolution=0.5)
+
+    remain = [x for x in algos if x not in ["pca", "umap"]]
+    if remain:
+        assert len(remain) == 1
+        algo = remain[0]
+        adata.obsm[f"X_{algo}"] = adata.X
+
+    # get score only for matching attributes across datasets
+    if only_matched_attributes:
+        attrs = [attr for attr in attributes if attr != "dataset"]
+        sel = adata.obs.groupby(attrs)["dataset"].nunique() >= 2
+        sel = sel.reset_index().drop("dataset", 1)
+        adata = adata[
+            pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :
+        ]
+
+    scores: tp.Dict[str, tp.Dict[str, float]] = dict()
+    for i, algo in enumerate(algos):
+        scores[algo] = dict()
+        for j, attr in enumerate(attributes):
+            scores[algo][attr] = silhouette_score(
+                adata.obsm[f"X_{algo}"], adata.obs[attr]
+            )
+
+    if not plot:
+        return scores
+
+    # Plot
+    adata = adata[adata.obs.sample(frac=1).index, :]
+    n, m = len(algos), len(attributes)
+    fig, axes = plt.subplots(n, m, figsize=(4 * m, 4 * n), squeeze=False)
+    cmaps = ([None] * len(attributes)) if cmaps is None else cmaps
+    for i, algo in enumerate(algos):
+        for j, (attr, cmap) in enumerate(zip(attributes, cmaps)):
+            try:
+                if is_numeric(a_meta[attr]):
+                    cmap_kws = dict(color_map=cmap)
+                else:
+                    cmap_kws = dict(palette=cmap)
+            except KeyError:
+                cmap_kws = {}
+            ax = axes[i, j]
+            sc.pl.embedding(
+                adata,
+                basis=algo,
+                color=attr,
+                alpha=0.5,
+                show=False,
+                **plt_kwargs,
+                **cmap_kws,
+                ax=ax,
+            )
+            s = scores[algo][attr]
+            ax.set(
+                title=f"{attr}, score: {s:.3f}",
+                xlabel=algo.upper() + "1",
+                ylabel=algo.upper() + "2",
+            )
+    rasterize_scanpy(fig)
+    fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.svg", **figkws)
+    plt.close(fig)
+
     return scores
 
 
