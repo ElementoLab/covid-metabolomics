@@ -27,7 +27,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
     """The main function to run the analysis."""
     x, y = get_x_y_nmr()
     plot_global_stats(x)
-    plot_nmr_robustness()
+    feature_abundance_by_physical_properties(x)
 
     unsupervised(x, y, attributes, data_type="NMR")
     supervised(x, y)
@@ -37,42 +37,6 @@ def main(cli: tp.Sequence[str] = None) -> int:
 
     # Fin
     return 0
-
-
-def get_signatures() -> DataFrame:
-    """
-    Extract sigantures of progression (day 7 vs admission),
-    and remission (discharge vs day 7)
-    """
-    from urlpath import URL
-
-    root = URL("https://www.medrxiv.org/highwire/filestream/")
-    url = root / "88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx"
-
-    df = pd.read_excel(url, index_col=0)
-    annot = get_nmr_feature_annotations()
-    df = (
-        annot.reset_index()
-        .set_index("abbreviation")
-        .join(df)
-        .reset_index()
-        .set_index("feature")
-    )
-
-    sigs = pd.DataFrame(index=df.index)
-    sigs["future_severe_pneumonia"] = df["Beta"]
-
-    df = pd.read_csv(metadata_dir / "infectious_disease_score.csv", index_col=0)
-    df = (
-        annot.reset_index()
-        .set_index("abbreviation")
-        .join(df)
-        .reset_index()
-        .set_index("feature")
-    )
-    sigs["future_infectious_disease"] = df["infectious_disease_score_weight"]
-
-    return sigs.sort_index()
 
 
 def get_feature_names_from_ukbbid(ids: tp.List[int]) -> tp.List[tp.Tuple[str, str]]:
@@ -202,79 +166,28 @@ def plot_global_stats(x: DataFrame) -> None:
     )
 
 
-def get_nmr_feature_technical_robustness() -> DataFrame:
-    """
-    Measure robustness of each variable based on repeated measuremnts or measurements of same individual.
-    """
-    nightingale_rep_csv_f = metadata_dir / "nightingale_feature_robustness.csv"
-    if not nightingale_rep_csv_f.exists():
-        from urlpath import URL
-        import pdfplumber
+def feature_abundance_by_physical_properties(x: DataFrame) -> None:
+    output_dir = (results_dir / "feature_network").mkdir()
+    annot = get_nmr_feature_annotations()
+    # Observe
+    x2 = x[[annot.index]]
 
-        nightingale_rep_f = metadata_dir / "original" / "nmrm_app2.pdf"
-
-        if not nightingale_rep_f.exists():
-            url = URL(
-                "https://biobank.ndph.ox.ac.uk/showcase/showcase/docs/nmrm_app2.pdf"
-            )
-            req = url.get()
-            with open(nightingale_rep_f, "wb") as handle:
-                handle.write(req.content)
-
-        row_endings = ["mmol/l", "g/l", "ratio", "nm", "%", "degree"]
-        pdf = pdfplumber.open(nightingale_rep_f)
-        _res = list()
-        for page in tqdm(pdf.pages):
-            lines = page.extract_text().split("\n")[:-2]
-            group = lines[0]
-
-            # find the split in rows
-            row_idxs = [0]
-            for i, line in enumerate(lines[1:], 1):
-                if all([q in row_endings for q in line.split(" ")]):
-                    row_idxs.append(i)
-            tqdm.write(f"Found {len(row_idxs) - 1} rows of plots in {page}.")
-            for start_line in row_idxs[:-1]:
-                features = lines[start_line + 1].split(" ")
-                perf = [
-                    r.strip().split(", R : ")
-                    for r in lines[start_line + 3].split("CV: ")[1:]
-                ]
-                res = pd.DataFrame(perf, index=features, columns=["CV", "R"]).assign(
-                    group=group
-                )
-                _res.append(res)
-        pdf.close()
-        res = pd.concat(_res).rename_axis(index="feature")
-        res["CV"] = res["CV"].str.replace("%", "").astype(float)
-        res["R"] = res["R"].astype(float)
-        res.dropna().to_csv(nightingale_rep_csv_f)
-    robustness = pd.read_csv(nightingale_rep_csv_f, index_col=0)
-    return robustness
-
-
-def plot_nmr_robustness() -> None:
-    rob = get_nmr_feature_technical_robustness()
-    annot = get_nmr_feature_annotations().reindex(rob.index)
-    cat = annot["group"].astype(pd.CategoricalDtype())
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    cmap = sns.color_palette("tab20")
-    for n, c in enumerate(cat.cat.categories):
-        p = rob.loc[cat == c]
-        ax.scatter(p["CV"], p["R"], color=cmap[n], label=c, alpha=0.5)
-    ax.set(xscale="log", xlabel="CV", ylabel="R^2")
-    ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
-    fig.savefig(
-        (results_dir / "nightingale_tech").mkdir() / "assay_robustness.svg", **figkws
+    group_x = (
+        x.T.join(annot)
+        .groupby(["lipid_density", "lipid_size"])
+        .mean()
+        .mean(1)
+        .to_frame("value")
+        .pivot_table(index="lipid_density", columns="lipid_size")["value"]
     )
 
-    # Relate technical and biological variability
-    x, _ = get_x_y_nmr()
-    cv2 = ((x.std() / x.mean()) ** 2).rename("CV2")
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.scatter(rob["R"] ** 6, cv2.reindex(rob.index), alpha=0.5)
+    # Plot
+    fig, ax = plt.subplots()
+    sns.heatmap(group_x, ax=ax, square=True, vmin=0, vmax=1, annot=True)
+    fig.savefig(
+        output_dir / "NMR_features.mean.dependent_on_patient_attributes.ukbb.svg",
+        **figkws,
+    )
 
 
 def model_data(x: DataFrame, y: DataFrame):
@@ -424,9 +337,9 @@ def supervised(x, y):
     sc.tl.umap(a)
     sc.tl.diffmap(a)
 
-    sc.pl.pca(a)
-    sc.pl.umap(a)
-    sc.pl.diffmap(a)
+    # sc.pl.pca(a)
+    # sc.pl.umap(a)
+    # sc.pl.diffmap(a)
 
     # compare results between cohorts
     a.obs["result"] = a.obs["result"].astype(str).astype(pd.CategoricalDtype())
@@ -641,28 +554,40 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     # # https://gist.github.com/gotgenes/2770023
 
 
-def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
-    output_dir = (results_dir / "feature_network").mkdir()
+def get_signatures() -> DataFrame:
+    """
+    Extract sigantures of progression (day 7 vs admission),
+    and remission (discharge vs day 7)
+    """
+    from urlpath import URL
+
+    root = URL("https://www.medrxiv.org/highwire/filestream/")
+    url = root / "88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx"
+
+    df = pd.read_excel(url, index_col=0)
     annot = get_nmr_feature_annotations()
-    # Observe
-    x2 = x[[annot.index]]
-
-    group_x = (
-        x.T.join(annot)
-        .groupby(["lipid_density", "lipid_size"])
-        .mean()
-        .mean(1)
-        .to_frame("value")
-        .pivot_table(index="lipid_density", columns="lipid_size")["value"]
+    df = (
+        annot.reset_index()
+        .set_index("abbreviation")
+        .join(df)
+        .reset_index()
+        .set_index("feature")
     )
 
-    # Plot
-    fig, ax = plt.subplots()
-    sns.heatmap(group_x, ax=ax, square=True, vmin=0, vmax=1, annot=True)
-    fig.savefig(
-        output_dir / "NMR_features.mean.dependent_on_patient_attributes.ukbb.svg",
-        **figkws,
+    sigs = pd.DataFrame(index=df.index)
+    sigs["future_severe_pneumonia"] = df["Beta"]
+
+    df = pd.read_csv(metadata_dir / "infectious_disease_score.csv", index_col=0)
+    df = (
+        annot.reset_index()
+        .set_index("abbreviation")
+        .join(df)
+        .reset_index()
+        .set_index("feature")
     )
+    sigs["future_infectious_disease"] = df["infectious_disease_score_weight"]
+
+    return sigs.sort_index()
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():

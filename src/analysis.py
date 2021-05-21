@@ -33,6 +33,12 @@ def main(cli: tp.Sequence[str] = None) -> int:
     """The main function to run the analysis."""
     # args = get_parser().parse_args(cli)
 
+    # Inspect panel regardless of feature abundance
+    get_nmr_feature_technical_robustness()
+    plot_nmr_technical_robustness()
+    # TODO: bring here plots on feature classes
+
+    # Our cohort
     x1, y1 = get_x_y_nmr()
 
     unsupervised(x1, y1, attributes, data_type="NMR")
@@ -194,6 +200,143 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
     return x, y
 
 
+def get_nmr_feature_technical_robustness() -> DataFrame:
+    """
+    Measure robustness of each variable based on repeated measuremnts or measurements of same individual.
+    """
+    nightingale_rep_csv_f = metadata_dir / "nightingale_feature_robustness.csv"
+    if not nightingale_rep_csv_f.exists():
+        from urlpath import URL
+        import pdfplumber
+
+        nightingale_rep_f = metadata_dir / "original" / "nmrm_app2.pdf"
+
+        if not nightingale_rep_f.exists():
+            url = URL(
+                "https://biobank.ndph.ox.ac.uk/showcase/showcase/docs/nmrm_app2.pdf"
+            )
+            req = url.get()
+            with open(nightingale_rep_f, "wb") as handle:
+                handle.write(req.content)
+
+        row_endings = ["mmol/l", "g/l", "ratio", "nm", "%", "degree"]
+        pdf = pdfplumber.open(nightingale_rep_f)
+        _res = list()
+        for page in tqdm(pdf.pages):
+            # last two lines are same for every page
+            lines = page.extract_text().split("\n")[:-2]
+            group = lines[0]
+
+            # find the split in rows
+            row_idxs = [0]
+            for i, line in enumerate(lines[1:], 1):
+                if all([q in row_endings for q in line.split(" ")]):
+                    row_idxs.append(i)
+
+            for start_line, end_line in zip(row_idxs[:-1], row_idxs[1:]):
+                features = lines[start_line + 1].split(" ")
+                # Skip false rows which start only with floats (page 35+)
+                try:
+                    _ = [float(x) for x in features]
+                    continue
+                except ValueError:
+                    pass
+
+                units = lines[end_line].split(" ")
+                perf = [
+                    r.strip().split(", R : ")
+                    for r in lines[start_line + 3].split("CV: ")[1:]
+                ]
+                res = pd.DataFrame(perf, index=features, columns=["CV", "R"]).assign(
+                    group=group
+                )
+                res["unit"] = units
+                print(res)
+                _res.append(res)
+        pdf.close()
+        res = pd.concat(_res).rename_axis(index="feature")
+        res["CV"] = res["CV"].str.replace("%", "").astype(float) / 100
+        res["R"] = res["R"].astype(float)
+        res["group"] = res["group"].str.replace("−", "-")
+
+        # # extract diameter from 'group' column
+        # # (otherwise 'group' column is the same as annot['subgroup'])
+        diameters = res["group"].str.extract(r".* \((.*)\)")[0]
+        diameters = diameters.str.extract(r"(\d+ nm)")[0].str.replace(" nm", "")
+        diameters.loc[res["group"].str.contains("upwards")] += "+"
+        res["diameter_nm"] = diameters
+        res["subgroup"] = res["group"].str.extract(r"(.*) \(")[0]
+        res["subgroup"] = res["subgroup"].fillna(res["group"])
+
+        # # Drop duplicates but pay attention to index
+        res = (
+            res.drop("group", axis=1).reset_index().drop_duplicates().set_index("feature")
+        )
+        res.to_csv(nightingale_rep_csv_f)
+    robustness = pd.read_csv(nightingale_rep_csv_f, index_col=0)
+    return robustness
+
+
+def plot_nmr_technical_robustness() -> None:
+    annot = get_nmr_feature_annotations()
+    cat = annot["group"].astype(pd.CategoricalDtype())
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = sns.color_palette("tab20")
+    for n, c in enumerate(cat.cat.categories):
+        p = rob.loc[cat == c]
+        ax.scatter(p["CV"], p["R"], color=cmap[n], label=c, alpha=0.5)
+    ax.set(xscale="log", xlabel="CV", ylabel="R^2")
+    ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
+    fig.savefig(
+        (results_dir / "nightingale_tech").mkdir() / "assay_robustness.svg", **figkws
+    )
+
+    # Relate technical and biological variability
+    x, _ = get_x_y_nmr()
+    cv2 = ((x.std() / x.mean()) ** 2).rename("CV2")
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(rob["R"] ** 6, cv2.reindex(rob.index), alpha=0.5)
+
+
+def plot_global_stats(x: DataFrame) -> None:
+    mean = x.mean()
+    var = x.var()
+    std = x.std()
+    cv2 = x.std() / x.mean()
+    var_names = ["Variance", "Standard deviation", "Squared coefficient of variation"]
+
+    annot = get_nmr_feature_annotations().reindex(x.columns)
+    cat = annot["group"].astype(pd.CategoricalDtype())
+    cmap = sns.color_palette("tab20")
+
+    fig, axes = plt.subplots(2, 3, figsize=(3 * 4, 4 * 2))
+    for axs, (_y, name) in zip(axes.T, zip([var, std, cv2], var_names)):
+        for ax in axs:
+            for n, c in enumerate(cat.cat.categories):
+                f = cat == c
+                ax.scatter(mean.loc[f], _y.loc[f], color=cmap[n], label=c, alpha=0.5)
+                ax.set(xlabel="Mean", ylabel=name)
+    for ax in axes.flat:
+        v = min(ax.get_xlim()[1], ax.get_ylim()[1])
+        ax.plot((0, v), (0, v), linestyle="--", color="grey")
+    for ax in axes[1, :]:
+        ax.loglog()
+    fig.savefig(
+        (results_dir / "nightingale_tech").mkdir() / "stat_properties.svg", **figkws
+    )
+
+
+def compare_clinical_and_panel():
+
+    x, y = get_x_y_nmr()
+
+    fig, ax = plt.subplots()
+    ax.scatter(y["creatinine"], x["Creatinine"])
+    ax.set(title="Creatinine", xlabel="Clinical labs", ylabel="NMR panel")
+
+
 def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
     if data_type == "NMR":
         return get_nmr_feature_annotations()
@@ -228,7 +371,8 @@ def plot_all_signatures():
 
     p = ukbb_sigs.join(dierckx_sigs).drop("future_infectious_disease", 1).dropna()
 
-    clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
+    grid = clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
+    plt.close(grid.fig)
 
 
 def get_nmr_feature_annotations() -> DataFrame:
@@ -346,6 +490,10 @@ def get_nmr_feature_annotations() -> DataFrame:
     # Variables not in our dataset
     annot = annot.drop(["HDL2_C", "HDL3_C", "Glycerol"])
 
+    # Join with robustness metrics
+    rob = get_nmr_feature_technical_robustness().drop("subgroup", axis=1)
+    annot = annot.join(rob)
+
     # annot.to_csv(metadata_dir / "NMR_feature_annot.csv")
 
     return annot
@@ -357,7 +505,14 @@ def plot_nmr_feature_annotations() -> None:
     annot = get_nmr_feature_annotations()
     annot = annot.query("measurement_type == 'absolute'")
 
-    attrs = ["metagroup", "group", "subgroup", "lipid_density", "lipid_size"]
+    attrs = [
+        "metagroup",
+        "group",
+        "subgroup",
+        "lipid_class",
+        "lipid_density",
+        "lipid_size",
+    ]
 
     cmaps = ["tab10", "tab20", tab40(range(40)), "inferno", "inferno"]
 
@@ -367,6 +522,7 @@ def plot_nmr_feature_annotations() -> None:
         sns.barplot(x=p, y=p.index, ax=ax, palette=cmap)
         ax.set(xlabel="Number of features")
     fig.savefig(output_dir / "NMR_features.frequency.svg", **figkws)
+    plt.close(fig)
 
 
 def unsupervised(
@@ -403,6 +559,7 @@ def unsupervised(
             output_dir / f"unsupervised.clustering.clustermap.{c}.svg",
             **figkws,
         )
+        plt.close(grid.fig)
     kws = dict(
         cmap="RdBu_r",
         rasterized=True,
@@ -415,12 +572,14 @@ def unsupervised(
         output_dir / "unsupervised.correlation_variable.clustermap.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     grid = clustermap(z_score(x).T.corr(), **kws, row_colors=y[attributes])
     grid.savefig(
         output_dir / "unsupervised.correlation_samples.clustermap.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     ## Dimres
     for model, pkwargs, mkwargs in [
@@ -445,7 +604,6 @@ def unsupervised(
                 continue
 
             fig = plot_projection(res, y, factors=attributes, algo_name=name, **pkwargs)
-
             fig.savefig(
                 output_dir / f"unsupervised.dimres.{name}.{label}svg",
                 **figkws,
@@ -507,6 +665,7 @@ def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
     raise NotImplementedError
     corr = z_score(x).corr()
     grid = clustermap(corr, metric="correlation", cmap="RdBu_r", center=0)
+    plt.close(grid.fig)
 
     return net
 
@@ -582,6 +741,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
         ax.set(xlabel="", ylabel="")
     rasterize_scanpy(fig)
     fig.savefig(output_dir / "feature_annotation.network.scanpy.svg", **figkws)
+    plt.close(fig)
 
     # Visualize as heatmaps as well
     corr = z_score(xx)
@@ -601,6 +761,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     grid.savefig(
         output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws
     )
+    plt.close(grid.fig)
 
     corr = z_score(xx).corr()
     grid = clustermap(
@@ -618,6 +779,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
         output_dir / "feature_annotation.network.scanpy.clustermap.symmetric.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     # Per group only
     feats = annott.columns.tolist()[2:] + ["leiden", "alive"]
@@ -659,6 +821,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     fig.savefig(
         output_dir / "feature_annotation.network.scanpy.only_lipoproteins.svg", **figkws
     )
+    plt.close(fig)
 
     import ringity
     import networkx as nx
@@ -678,6 +841,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     fig.savefig(
         output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws
     )
+    plt.close(fig)
 
     # Check the same on steady state only
     xx = x.loc[y.query("group == 'control'").index]
@@ -712,6 +876,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     fig.savefig(
         output_dir / "feature_annotation.only_healthy.network.scanpy.svg", **figkws
     )
+    plt.close(fig)
 
     corr = z_score(xx)
     grid = clustermap(
@@ -729,6 +894,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
         output_dir / "feature_annotation.only_healthy.network.scanpy.clustermap.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     corr = z_score(xx).corr()
     grid = clustermap(
@@ -747,6 +913,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
         / "feature_annotation.only_healthy.network.scanpy.clustermap.symmetric.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     #
 
@@ -823,6 +990,7 @@ def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
             output_dir / f"NMR_features.mean.dependent_on_patient_attributes.{label}.svg",
             **figkws,
         )
+        plt.close(fig)
 
 
 def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
@@ -857,6 +1025,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
         output_dir / "disease_change.all_variables.clustermap.svg",
         **figkws,
     )
+    plt.close(grid.fig)
 
     annot = get_feature_annotations(x, data_type)
     annot = annot.loc[annot["measurement_type"] == "absolute"]
@@ -883,6 +1052,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
         output_dir / "disease_change.dependent_on_feature_properties.swarmboxenplot.svg",
         **figkws,
     )
+    plt.close(fig)
 
 
 def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
@@ -921,6 +1091,7 @@ def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
         / "pseudotime_change.dependent_on_feature_properties.swarmboxenplot.svg",
         **figkws,
     )
+    plt.close(fig)
 
 
 def diffusion(x, y) -> None:

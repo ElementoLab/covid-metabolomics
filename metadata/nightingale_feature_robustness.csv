@@ -1,0 +1,250 @@
+feature,CV,R,unit,diameter_nm,subgroup
+Total_C,0.0297,0.9,mmol/l,,Cholesterol
+non_HDL_C,0.0329,0.92,mmol/l,,Cholesterol
+Remnant_C,0.031400000000000004,0.93,mmol/l,,Cholesterol
+VLDL_C,0.0368,0.95,mmol/l,,Cholesterol
+Clinical_LDL_C,0.0405,0.91,mmol/l,,Cholesterol
+LDL_C,0.039599999999999996,0.89,mmol/l,,Cholesterol
+HDL_C,0.028900000000000002,0.93,mmol/l,,Cholesterol
+Total_TG,0.033,0.96,mmol/l,,Triglycerides
+VLDL_TG,0.0382,0.96,mmol/l,,Triglycerides
+LDL_TG,0.0323,0.92,mmol/l,,Triglycerides
+HDL_TG,0.0333,0.94,mmol/l,,Triglycerides
+Total_PL,0.024,0.89,mmol/l,,Phospholipids
+VLDL_PL,0.0366,0.95,mmol/l,,Phospholipids
+LDL_PL,0.0332,0.9,mmol/l,,Phospholipids
+HDL_PL,0.0245,0.92,mmol/l,,Phospholipids
+Total_CE,0.0304,0.89,mmol/l,,Cholesteryl esters
+VLDL_CE,0.036000000000000004,0.94,mmol/l,,Cholesteryl esters
+LDL_CE,0.0403,0.89,mmol/l,,Cholesteryl esters
+HDL_CE,0.0297,0.93,mmol/l,,Cholesteryl esters
+Total_FC,0.028399999999999998,0.91,mmol/l,,Free cholesterol
+VLDL_FC,0.0387,0.95,mmol/l,,Free cholesterol
+LDL_FC,0.038599999999999995,0.9,mmol/l,,Free cholesterol
+HDL_FC,0.0271,0.94,mmol/l,,Free cholesterol
+Total_L,0.027000000000000003,0.89,mmol/l,,Total lipids
+VLDL_L,0.0364,0.96,mmol/l,,Total lipids
+LDL_L,0.0371,0.89,mmol/l,,Total lipids
+HDL_L,0.0258,0.92,mmol/l,,Total lipids
+Total_P,0.029500000000000002,0.82,mmol/l,,Lipoprotein particle concentrations
+VLDL_P,0.031,0.95,mmol/l,,Lipoprotein particle concentrations
+LDL_P,0.026699999999999998,0.93,mmol/l,,Lipoprotein particle concentrations
+HDL_P,0.0308,0.82,mmol/l,,Lipoprotein particle concentrations
+VLDL_size,0.0024,0.97,nm,,Lipoprotein particle sizes
+LDL_size,0.0011,0.69,nm,,Lipoprotein particle sizes
+HDL_size,0.0014000000000000002,0.98,nm,,Lipoprotein particle sizes
+Phosphoglyc,0.027999999999999997,0.87,mmol/l,,Other lipids
+TG_by_PG,0.0258,0.97,ratio,,Other lipids
+Cholines,0.026699999999999998,0.87,mmol/l,,Other lipids
+Phosphatidylc,0.026600000000000002,0.89,mmol/l,,Other lipids
+Sphingomyelins,0.0319,0.83,mmol/l,,Other lipids
+ApoB,0.025099999999999997,0.94,g/l,,Apolipoproteins
+ApoA1,0.024900000000000002,0.89,g/l,,Apolipoproteins
+ApoB_by_ApoA1,0.018600000000000002,0.98,ratio,,Apolipoproteins
+Total_FA,0.0275,0.9,mmol/l,,Fatty acids
+Unsaturation,0.0077,0.93,degree,,Fatty acids
+Omega_3,0.0601,0.92,mmol/l,,Fatty acids
+Omega_6,0.0239,0.88,mmol/l,,Fatty acids
+PUFA,0.024900000000000002,0.88,mmol/l,,Fatty acids
+MUFA,0.0351,0.93,mmol/l,,Fatty acids
+SFA,0.029300000000000003,0.91,mmol/l,,Fatty acids
+LA,0.030899999999999997,0.89,mmol/l,,Fatty acids
+DHA,0.07150000000000001,0.86,mmol/l,,Fatty acids
+Omega_3_pct,0.048799999999999996,0.94,%,,Fatty acid ratios
+Omega_6_pct,0.0101,0.96,%,,Fatty acid ratios
+PUFA_pct,0.0096,0.95,%,,Fatty acid ratios
+MUFA_pct,0.012,0.96,%,,Fatty acid ratios
+SFA_pct,0.0064,0.95,%,,Fatty acid ratios
+LA_pct,0.0166,0.94,%,,Fatty acid ratios
+DHA_pct,0.0643,0.89,%,,Fatty acid ratios
+PUFA_by_MUFA,0.0207,0.95,ratio,,Fatty acid ratios
+Omega_6_by_Omega_3,0.050499999999999996,0.89,ratio,,Fatty acid ratios
+Ala,0.08800000000000001,0.61,mmol/l,,Amino acids
+Gln,0.048,0.66,mmol/l,,Amino acids
+Gly,0.1024,0.76,mmol/l,,Amino acids
+His,0.0862,0.22,mmol/l,,Amino acids
+Total_BCAA,0.0475,0.85,mmol/l,,Branched-chain amino acids
+Ile,0.0908,0.78,mmol/l,,Branched-chain amino acids
+Leu,0.056100000000000004,0.85,mmol/l,,Branched-chain amino acids
+Val,0.0449,0.83,mmol/l,,Branched-chain amino acids
+Phe,0.1017,0.44,mmol/l,,Aromatic amino acids
+Tyr,0.0643,0.76,mmol/l,,Aromatic amino acids
+Glucose,0.039,0.89,mmol/l,,Glycolysis related metabolites
+Lactate,0.0536,0.88,mmol/l,,Glycolysis related metabolites
+Pyruvate,0.0691,0.87,mmol/l,,Glycolysis related metabolites
+Citrate,0.0613,0.69,mmol/l,,Glycolysis related metabolites
+bOHbutyrate,0.1329,0.91,mmol/l,,Ketone bodies
+Acetate,0.2262,0.47,mmol/l,,Ketone bodies
+Acetoacetate,0.2667,0.8,mmol/l,,Ketone bodies
+Acetone,0.1121,0.53,mmol/l,,Ketone bodies
+Creatinine,0.051,0.78,mmol/l,,Fluid balance
+Albumin,0.0288,0.57,g/l,,Fluid balance
+GlycA,0.030600000000000002,0.82,mmol/l,,Inflammation
+XXL_VLDL_P,0.1477,0.94,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_L,0.1399,0.94,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_PL,0.18460000000000001,0.94,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_C,0.1008,0.95,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_CE,0.1047,0.95,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_FC,0.12179999999999999,0.93,mmol/l,75+,Chylomicrons and extremely large VLDL
+XXL_VLDL_TG,0.20929999999999999,0.93,mmol/l,75+,Chylomicrons and extremely large VLDL
+XL_VLDL_P,0.0575,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_L,0.056600000000000004,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_PL,0.08539999999999999,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_C,0.0512,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_CE,0.048,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_FC,0.0673,0.96,mmol/l,64,Very large VLDL
+XL_VLDL_TG,0.0638,0.96,mmol/l,64,Very large VLDL
+L_VLDL_P,0.0458,0.96,mmol/l,6,Large VLDL
+L_VLDL_L,0.047,0.95,mmol/l,6,Large VLDL
+L_VLDL_PL,0.057999999999999996,0.96,mmol/l,6,Large VLDL
+L_VLDL_C,0.048,0.95,mmol/l,6,Large VLDL
+L_VLDL_CE,0.0489,0.95,mmol/l,6,Large VLDL
+L_VLDL_FC,0.04769999999999999,0.96,mmol/l,6,Large VLDL
+L_VLDL_TG,0.0507,0.94,mmol/l,6,Large VLDL
+M_VLDL_P,0.0407,0.94,mmol/l,5,Medium VLDL
+M_VLDL_L,0.0401,0.94,mmol/l,5,Medium VLDL
+M_VLDL_PL,0.041100000000000005,0.94,mmol/l,5,Medium VLDL
+M_VLDL_C,0.042699999999999995,0.94,mmol/l,5,Medium VLDL
+M_VLDL_CE,0.0481,0.95,mmol/l,5,Medium VLDL
+M_VLDL_FC,0.042699999999999995,0.94,mmol/l,5,Medium VLDL
+M_VLDL_TG,0.044800000000000006,0.93,mmol/l,5,Medium VLDL
+S_VLDL_P,0.0325,0.94,mmol/l,8,Small VLDL
+S_VLDL_L,0.0321,0.94,mmol/l,8,Small VLDL
+S_VLDL_PL,0.0333,0.94,mmol/l,8,Small VLDL
+S_VLDL_C,0.032799999999999996,0.94,mmol/l,8,Small VLDL
+S_VLDL_CE,0.033,0.95,mmol/l,8,Small VLDL
+S_VLDL_FC,0.0352,0.94,mmol/l,8,Small VLDL
+S_VLDL_TG,0.0359,0.94,mmol/l,8,Small VLDL
+XS_VLDL_P,0.0279,0.94,mmol/l,3,Very small VLDL
+XS_VLDL_L,0.028300000000000002,0.94,mmol/l,3,Very small VLDL
+XS_VLDL_PL,0.030299999999999997,0.93,mmol/l,3,Very small VLDL
+XS_VLDL_C,0.033,0.93,mmol/l,3,Very small VLDL
+XS_VLDL_CE,0.0345,0.93,mmol/l,3,Very small VLDL
+XS_VLDL_FC,0.031,0.93,mmol/l,3,Very small VLDL
+XS_VLDL_TG,0.0297,0.94,mmol/l,3,Very small VLDL
+IDL_P,0.0296,0.93,mmol/l,6,IDL
+IDL_L,0.027200000000000002,0.93,mmol/l,6,IDL
+IDL_PL,0.023700000000000002,0.94,mmol/l,6,IDL
+IDL_C,0.030699999999999998,0.93,mmol/l,6,IDL
+IDL_CE,0.030600000000000002,0.93,mmol/l,6,IDL
+IDL_FC,0.035,0.92,mmol/l,6,IDL
+IDL_TG,0.0275,0.94,mmol/l,6,IDL
+L_LDL_P,0.0281,0.93,mmol/l,5,Large LDL
+L_LDL_L,0.036699999999999997,0.89,mmol/l,5,Large LDL
+L_LDL_PL,0.0336,0.9,mmol/l,5,Large LDL
+L_LDL_C,0.0394,0.89,mmol/l,5,Large LDL
+L_LDL_CE,0.0407,0.88,mmol/l,5,Large LDL
+L_LDL_FC,0.0374,0.91,mmol/l,5,Large LDL
+L_LDL_TG,0.0318,0.92,mmol/l,5,Large LDL
+M_LDL_P,0.042699999999999995,0.89,mmol/l,23,Medium LDL
+M_LDL_L,0.0429,0.89,mmol/l,23,Medium LDL
+M_LDL_PL,0.0415,0.89,mmol/l,23,Medium LDL
+M_LDL_C,0.045,0.89,mmol/l,23,Medium LDL
+M_LDL_CE,0.045899999999999996,0.89,mmol/l,23,Medium LDL
+M_LDL_FC,0.0451,0.88,mmol/l,23,Medium LDL
+M_LDL_TG,0.036699999999999997,0.92,mmol/l,23,Medium LDL
+S_LDL_P,0.0273,0.93,mmol/l,7,Small LDL
+S_LDL_L,0.0291,0.92,mmol/l,7,Small LDL
+S_LDL_PL,0.0233,0.94,mmol/l,7,Small LDL
+S_LDL_C,0.0339,0.91,mmol/l,7,Small LDL
+S_LDL_CE,0.0346,0.91,mmol/l,7,Small LDL
+S_LDL_FC,0.0354,0.92,mmol/l,7,Small LDL
+S_LDL_TG,0.0308,0.95,mmol/l,7,Small LDL
+XL_HDL_P,0.029300000000000003,0.97,mmol/l,3,Very large HDL
+XL_HDL_L,0.04190000000000001,0.97,mmol/l,3,Very large HDL
+XL_HDL_PL,0.0679,0.97,mmol/l,3,Very large HDL
+XL_HDL_C,0.0313,0.98,mmol/l,3,Very large HDL
+XL_HDL_CE,0.032400000000000005,0.98,mmol/l,3,Very large HDL
+XL_HDL_FC,0.0381,0.94,mmol/l,3,Very large HDL
+XL_HDL_TG,0.0388,0.94,mmol/l,3,Very large HDL
+L_HDL_P,0.0366,0.98,mmol/l,1,Large HDL
+L_HDL_L,0.0315,0.98,mmol/l,1,Large HDL
+L_HDL_PL,0.0323,0.97,mmol/l,1,Large HDL
+L_HDL_C,0.0355,0.98,mmol/l,1,Large HDL
+L_HDL_CE,0.0362,0.98,mmol/l,1,Large HDL
+L_HDL_FC,0.0377,0.98,mmol/l,1,Large HDL
+L_HDL_TG,0.0481,0.94,mmol/l,1,Large HDL
+M_HDL_P,0.0358,0.89,mmol/l,9,Medium HDL
+M_HDL_L,0.032400000000000005,0.89,mmol/l,9,Medium HDL
+M_HDL_PL,0.029500000000000002,0.9,mmol/l,9,Medium HDL
+M_HDL_C,0.0375,0.89,mmol/l,9,Medium HDL
+M_HDL_CE,0.0368,0.89,mmol/l,9,Medium HDL
+M_HDL_FC,0.0415,0.9,mmol/l,9,Medium HDL
+M_HDL_TG,0.037000000000000005,0.94,mmol/l,9,Medium HDL
+S_HDL_P,0.0322,0.74,mmol/l,7,Small HDL
+S_HDL_L,0.029300000000000003,0.79,mmol/l,7,Small HDL
+S_HDL_PL,0.027200000000000002,0.82,mmol/l,7,Small HDL
+S_HDL_C,0.034300000000000004,0.73,mmol/l,7,Small HDL
+S_HDL_CE,0.035,0.74,mmol/l,7,Small HDL
+S_HDL_FC,0.0329,0.75,mmol/l,7,Small HDL
+S_HDL_TG,0.0265,0.96,mmol/l,7,Small HDL
+XXL_VLDL_PL_pct,0.0275,0.72,%,,Chylomicrons and extremely large VLDL ratios
+XXL_VLDL_C_pct,0.0603,0.65,%,,Chylomicrons and extremely large VLDL ratios
+XXL_VLDL_CE_pct,0.0913,0.55,%,,Chylomicrons and extremely large VLDL ratios
+XXL_VLDL_FC_pct,0.0394,0.75,%,,Chylomicrons and extremely large VLDL ratios
+XXL_VLDL_TG_pct,0.0375,0.74,%,,Chylomicrons and extremely large VLDL ratios
+XL_VLDL_PL_pct,0.0202,0.73,%,,Very large VLDL ratios
+XL_VLDL_C_pct,0.019,0.95,%,,Very large VLDL ratios
+XL_VLDL_CE_pct,0.0311,0.93,%,,Very large VLDL ratios
+XL_VLDL_FC_pct,0.0218,0.81,%,,Very large VLDL ratios
+XL_VLDL_TG_pct,0.015300000000000001,0.92,%,,Very large VLDL ratios
+L_VLDL_PL_pct,0.0127,0.95,%,,Large VLDL ratios
+L_VLDL_C_pct,0.0206,0.89,%,,Large VLDL ratios
+L_VLDL_CE_pct,0.025099999999999997,0.92,%,,Large VLDL ratios
+L_VLDL_FC_pct,0.0167,0.81,%,,Large VLDL ratios
+L_VLDL_TG_pct,0.0152,0.88,%,,Large VLDL ratios
+M_VLDL_PL_pct,0.0104,0.92,%,,Medium VLDL ratios
+M_VLDL_C_pct,0.0222,0.96,%,,Medium VLDL ratios
+M_VLDL_CE_pct,0.0334,0.97,%,,Medium VLDL ratios
+M_VLDL_FC_pct,0.0163,0.93,%,,Medium VLDL ratios
+M_VLDL_TG_pct,0.0174,0.95,%,,Medium VLDL ratios
+S_VLDL_PL_pct,0.006500000000000001,0.97,%,,Small VLDL ratios
+S_VLDL_C_pct,0.013000000000000001,0.95,%,,Small VLDL ratios
+S_VLDL_CE_pct,0.016399999999999998,0.91,%,,Small VLDL ratios
+S_VLDL_FC_pct,0.0116,0.97,%,,Small VLDL ratios
+S_VLDL_TG_pct,0.0159,0.96,%,,Small VLDL ratios
+XS_VLDL_PL_pct,0.0075,0.75,%,,Very small VLDL ratios
+XS_VLDL_C_pct,0.010700000000000001,0.94,%,,Very small VLDL ratios
+XS_VLDL_CE_pct,0.0134,0.95,%,,Very small VLDL ratios
+XS_VLDL_FC_pct,0.0067,0.86,%,,Very small VLDL ratios
+XS_VLDL_TG_pct,0.024399999999999998,0.93,%,,Very small VLDL ratios
+IDL_PL_pct,0.0076,0.84,%,,IDL ratios
+IDL_C_pct,0.0051,0.94,%,,IDL ratios
+IDL_CE_pct,0.0063,0.93,%,,IDL ratios
+IDL_FC_pct,0.0151,0.77,%,,IDL ratios
+IDL_TG_pct,0.025,0.96,%,,IDL ratios
+L_LDL_PL_pct,0.008100000000000001,0.77,%,,Large LDL ratios
+L_LDL_C_pct,0.0034000000000000002,0.9,%,,Large LDL ratios
+L_LDL_CE_pct,0.005699999999999999,0.74,%,,Large LDL ratios
+L_LDL_FC_pct,0.0078000000000000005,0.95,%,,Large LDL ratios
+L_LDL_TG_pct,0.024300000000000002,0.95,%,,Large LDL ratios
+M_LDL_PL_pct,0.0075,0.77,%,,Medium LDL ratios
+M_LDL_C_pct,0.0042,0.84,%,,Medium LDL ratios
+M_LDL_CE_pct,0.0077,0.84,%,,Medium LDL ratios
+M_LDL_FC_pct,0.0104,0.95,%,,Medium LDL ratios
+M_LDL_TG_pct,0.0259,0.95,%,,Medium LDL ratios
+S_LDL_PL_pct,0.0127,0.8,%,,Small LDL ratios
+S_LDL_C_pct,0.0069,0.79,%,,Small LDL ratios
+S_LDL_CE_pct,0.0088,0.86,%,,Small LDL ratios
+S_LDL_FC_pct,0.0123,0.95,%,,Small LDL ratios
+S_LDL_TG_pct,0.021400000000000002,0.97,%,,Small LDL ratios
+XL_HDL_PL_pct,0.020499999999999997,0.86,%,,Very large HDL ratios
+XL_HDL_C_pct,0.0132,0.86,%,,Very large HDL ratios
+XL_HDL_CE_pct,0.0176,0.76,%,,Very large HDL ratios
+XL_HDL_FC_pct,0.018600000000000002,0.95,%,,Very large HDL ratios
+XL_HDL_TG_pct,0.0473,0.92,%,,Very large HDL ratios
+L_HDL_PL_pct,0.005,0.96,%,,Large HDL ratios
+L_HDL_C_pct,0.0096,0.97,%,,Large HDL ratios
+L_HDL_CE_pct,0.0125,0.96,%,,Large HDL ratios
+L_HDL_FC_pct,0.0113,0.94,%,,Large HDL ratios
+L_HDL_TG_pct,0.042199999999999994,0.96,%,,Large HDL ratios
+M_HDL_PL_pct,0.0043,0.89,%,,Medium HDL ratios
+M_HDL_C_pct,0.0075,0.94,%,,Medium HDL ratios
+M_HDL_CE_pct,0.0079,0.94,%,,Medium HDL ratios
+M_HDL_FC_pct,0.009899999999999999,0.94,%,,Medium HDL ratios
+M_HDL_TG_pct,0.0342,0.96,%,,Medium HDL ratios
+S_HDL_PL_pct,0.0037,0.89,%,,Small HDL ratios
+S_HDL_C_pct,0.0074,0.91,%,,Small HDL ratios
+S_HDL_CE_pct,0.009300000000000001,0.92,%,,Small HDL ratios
+S_HDL_FC_pct,0.0054,0.95,%,,Small HDL ratios
+S_HDL_TG_pct,0.0233,0.97,%,,Small HDL ratios
