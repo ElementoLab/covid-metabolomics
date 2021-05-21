@@ -290,37 +290,50 @@ def get_nmr_feature_annotations() -> DataFrame:
         "XL": "Extra large",
         "XXL": "Extra extra large",
     }
-
-    lipoprots = [
-        "Cholesterol",
-        "Triglycerides",
-        "Phospholipids",
-        "Cholesteryl esters",
-        "Free cholesterol",
-    ]
+    lipoprots = {
+        "P": "Particle concentration",
+        "size": "Particle size",
+        "L": "Total lipids",
+        "C": "Cholesterol",
+        "TG": "Triglycerides",
+        "PL": "Phospholipids",
+        "CE": "Cholesteryl esters",
+        "FC": "Free cholesterol",
+    }
     annot["metagroup"] = annot["group"]
     annot.loc[
-        annot["group"].isin(lipoprots) | annot["group"].str.contains("Lipo|lipo|lipid"),
+        annot["group"].isin(lipoprots.keys())
+        | annot["group"].str.contains("Lipo|lipo|lipid")
+        & (annot["group"] != "Apolipoproteins"),
         "metagroup",
     ] = "Lipid"
 
-    annot["density"] = np.nan
+    annot["lipid_class"] = np.nan
+    for lipid_class in lipoprots:
+        annot.loc[
+            annot.index.str.endswith(lipid_class)
+            | annot.index.str.endswith(lipid_class + "_pct"),
+            "lipid_class",
+        ] = lipoprots[lipid_class]
+    annot["lipid_density"] = np.nan
     for density in densities:
         annot.loc[
-            annot.index.str.contains(density + "_"),
-            "density",
+            annot.index.str.contains(density + "_") & ~annot.index.str.startswith("non"),
+            "lipid_density",
         ] = density
-    annot["size"] = np.nan
+    annot["lipid_size"] = np.nan
     for size in sizes:
-        annot.loc[annot.index.str.startswith(size + "_"), "size"] = size
+        annot.loc[annot.index.str.startswith(size + "_"), "lipid_size"] = size
     # fix VLDL/LDL mix
-    annot.loc[annot.index.str.contains("VLDL"), "density"] = "VLDL"
+    annot.loc[annot.index.str.contains("VLDL"), "lipid_density"] = "VLDL"
 
     # # make ordered categories
-    annot["density"] = pd.Categorical(
-        annot["density"], ordered=True, categories=densities.keys()
+    annot["lipid_density"] = pd.Categorical(
+        annot["lipid_density"], ordered=True, categories=densities.keys()
     )
-    annot["size"] = pd.Categorical(annot["size"], ordered=True, categories=sizes.keys())
+    annot["lipid_size"] = pd.Categorical(
+        annot["lipid_size"], ordered=True, categories=sizes.keys()
+    )
 
     # Type of measurement/transformation
     annot["measurement_type"] = "absolute"
@@ -344,7 +357,7 @@ def plot_nmr_feature_annotations() -> None:
     annot = get_nmr_feature_annotations()
     annot = annot.query("measurement_type == 'absolute'")
 
-    attrs = ["metagroup", "group", "subgroup", "density", "size"]
+    attrs = ["metagroup", "group", "subgroup", "lipid_density", "lipid_size"]
 
     cmaps = ["tab10", "tab20", tab40(range(40)), "inferno", "inferno"]
 
@@ -550,8 +563,8 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
         len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
     )
     group_cmap = tab40(range(a.obs["group"].nunique()))[:, :3]
-    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
-    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = (
         [group_cmap.tolist(), "Paired"]
         + [density_cmap, size_cmap]
@@ -620,8 +633,8 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     sc.tl.leiden(a)
     PyMDE().fit_anndata(a).fit_anndata(a, "alternate")
 
-    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
-    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(axes, feats, cmaps):
         p = (
@@ -683,8 +696,8 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     fig, ax = plt.subplots(
         len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
     )
-    size_cmap = sns.color_palette("inferno", an.obs["size"].nunique())
-    density_cmap = sns.color_palette("inferno", an.obs["density"].nunique())
+    size_cmap = sns.color_palette("inferno", an.obs["lipid_size"].nunique())
+    density_cmap = sns.color_palette("inferno", an.obs["lipid_density"].nunique())
     cmaps = ["tab20b", "Paired"] + [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
         p = (
@@ -773,11 +786,11 @@ def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
             group_x = (
                 x2.loc[h]
                 .T.join(annot)
-                .groupby(["density", "size"])
+                .groupby(["lipid_density", "lipid_size"])
                 .mean()
                 .mean(1)
                 .to_frame("value")
-                .pivot_table(index="density", columns="size")["value"]
+                .pivot_table(index="lipid_density", columns="lipid_size")["value"]
             )
             if j == 0:
                 ctrl = group_x
@@ -848,7 +861,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
     annot = get_feature_annotations(x, data_type)
     annot = annot.loc[annot["measurement_type"] == "absolute"]
 
-    rows = ["size", "density"]
+    rows = ["lipid_size", "lipid_density"]
     cols = changes.columns
     n, m = (
         len(rows),
@@ -885,7 +898,7 @@ def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
     )
     annot = get_feature_annotations(x, data_type)
     annot = annot.loc[annot["measurement_type"] == "absolute"]
-    rows = ["size", "density"]
+    rows = ["lipid_size", "lipid_density"]
     cols = corr_mat.columns
     n, m = (
         len(rows),
