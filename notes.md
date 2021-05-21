@@ -120,3 +120,15 @@ OR hierarchical clustering
 
 ### TODO
 See if fat saturation and inflamation are related = Yes, 0.2136 in UKBB.
+
+
+Clear heatmap of what is changing
+
+Species annotation (tryglycerides, etc...)
+
+Enrichment analysis
+
+
+Intubation treatment -> propofol has high lipid concentration
+See relationship between intubation and metabolite changes
+

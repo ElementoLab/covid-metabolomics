@@ -39,6 +39,42 @@ def main(cli: tp.Sequence[str] = None) -> int:
     return 0
 
 
+def get_signatures() -> DataFrame:
+    """
+    Extract sigantures of progression (day 7 vs admission),
+    and remission (discharge vs day 7)
+    """
+    from urlpath import URL
+
+    root = URL("https://www.medrxiv.org/highwire/filestream/")
+    url = root / "88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx"
+
+    df = pd.read_excel(url, index_col=0)
+    annot = get_nmr_feature_annotations()
+    df = (
+        annot.reset_index()
+        .set_index("abbreviation")
+        .join(df)
+        .reset_index()
+        .set_index("feature")
+    )
+
+    sigs = pd.DataFrame(index=df.index)
+    sigs["future_severe_pneumonia"] = df["Beta"]
+
+    df = pd.read_csv(metadata_dir / "infectious_disease_score.csv", index_col=0)
+    df = (
+        annot.reset_index()
+        .set_index("abbreviation")
+        .join(df)
+        .reset_index()
+        .set_index("feature")
+    )
+    sigs["future_infectious_disease"] = df["infectious_disease_score_weight"]
+
+    return sigs.sort_index()
+
+
 def get_feature_names_from_ukbbid(ids: tp.List[int]) -> tp.List[tp.Tuple[str, str]]:
     import aiohttp
     import asyncio
@@ -145,11 +181,17 @@ def plot_global_stats(x: DataFrame) -> None:
     cv2 = x.std() / x.mean()
     var_names = ["Variance", "Standard deviation", "Squared coefficient of variation"]
 
+    annot = get_nmr_feature_annotations().reindex(x.columns)
+    cat = annot["group"].astype(pd.CategoricalDtype())
+    cmap = sns.color_palette("tab20")
+
     fig, axes = plt.subplots(2, 3, figsize=(3 * 4, 4 * 2))
     for axs, (_y, name) in zip(axes.T, zip([var, std, cv2], var_names)):
         for ax in axs:
-            ax.scatter(mean, _y, alpha=0.5)
-            ax.set(xlabel="Mean", ylabel=name)
+            for n, c in enumerate(cat.cat.categories):
+                f = cat == c
+                ax.scatter(mean.loc[f], _y.loc[f], color=cmap[n], label=c, alpha=0.5)
+                ax.set(xlabel="Mean", ylabel=name)
     for ax in axes.flat:
         v = min(ax.get_xlim()[1], ax.get_ylim()[1])
         ax.plot((0, v), (0, v), linestyle="--", color="grey")
@@ -295,7 +337,7 @@ def unsupervised(
     Unsupervised analysis of data using sample/feature correlations and
     dimentionality reduction and their visualization dependent on sample attributes.
     """
-    from src.analysis import _plot_projection
+    from src.analysis import plot_projection
 
     if attributes is None:
         attributes = list()
@@ -347,6 +389,8 @@ def unsupervised(
 
 
 def supervised(x, y):
+    import pingouin as pg
+
     output_dir = results_dir / "supervised"
 
     def rank_genes_groups_df(adata, key="rank_genes_groups"):
@@ -396,8 +440,9 @@ def supervised(x, y):
 
     stats = pd.read_csv(
         results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
+        index_col=0,
     )
-    change = stats.set_index("Variable")["hedges_g"].rename("alive") * -1
+    change = stats["hedges_g"].rename("alive") * -1
 
     p = res.join(change)
 
@@ -405,29 +450,14 @@ def supervised(x, y):
     ax.scatter(p["alive"], p["logfoldchanges"])
 
     # Compare also using exact same test
-    y["result"] = y["result"].astype(str).astype(pd.CategoricalDtype())
-    fig, stats = swarmboxenplot(
-        data=x.join(y),
-        x="result",
-        y=x.columns,
-        swarm=False,
-        boxen=False,
-    )
-    plt.close(fig)
+    p = x.join(y["result"]).dropna()
+    s = list()
+    for var in tqdm(x.columns):
+        s.append(pg.mwu(p["result"], p[var]).rename_axis(var))
+    stats = pd.concat(s)
     stats.to_csv(
-        output_dir / f"supervised.ukbb.result.all_variables.stats.csv",
+        output_dir / "supervised.ukbb.result.all_variables.stats.csv",
         index=False,
-    )
-
-    # now plot top variables
-    fig, s2 = swarmboxenplot(
-        data=x.join(y),
-        x="result",
-        y=stats.sort_values("p-unc")["Variable"].head(20).unique(),
-    )
-    fig.savefig(
-        output_dir / f"supervised.ukbb.result.top_differential.swarmboxenplot.svg",
-        **figkws,
     )
 
 
@@ -462,8 +492,8 @@ def get_feature_network(x: DataFrame) -> DataFrame:
         len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
     )
     group_cmap = tab40(range(a.obs["group"].nunique()))[:, :3]
-    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
-    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = (
         [group_cmap.tolist(), "Paired"]
         + [density_cmap, size_cmap]
@@ -516,6 +546,35 @@ def get_feature_network(x: DataFrame) -> DataFrame:
         **figkws,
     )
 
+    # # hack to get the side colors:
+    attrs = ["metagroup", "group", "lipid_density", "lipid_size"]
+    gcmap = matplotlib.colors.ListedColormap(colors=group_cmap, name="group")
+    cmaps = ["Paired", gcmap, "inferno", "inferno"]
+    p = annott.join(a.obs["leiden"])[attrs]
+    p["metagroup"] = pd.Categorical(
+        p["metagroup"]
+    )  # , categories=p['metagroup'].value_counts().index)
+    p["group"] = pd.Categorical(
+        p["group"]
+    )  # , categories=p['group'].value_counts().index)
+    p = p.iloc[grid.dendrogram_row.reordered_ind]
+    fig, axes = plt.subplots(1, p.shape[1], figsize=(5, 10))
+    for ax, at, cmap in zip(axes, p.columns, cmaps):
+        sns.heatmap(
+            p[at].cat.codes.to_frame(at).replace(-1, np.nan),
+            cmap=cmap,
+            ax=ax,
+            yticklabels=False,
+            rasterized=True,
+            vmin=0,
+        )
+        fig.axes[-1].set_yticklabels(p[at].cat.categories)
+    fig.savefig(
+        output_dir
+        / "feature_annotation.network.scanpy.clustermap.symmetric.ukbb.annotations.svg",
+        **figkws,
+    )
+
     # Per group only
     feats = annott.columns.tolist()[2:] + ["leiden", "alive"]
     obs = annott.query("group == 'Lipoprotein subclasses'").join(change)
@@ -530,8 +589,8 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     sc.tl.leiden(a)
     PyMDE().fit_anndata(a).fit_anndata(a, "alternate")
 
-    size_cmap = sns.color_palette("inferno", a.obs["size"].nunique())
-    density_cmap = sns.color_palette("inferno", a.obs["density"].nunique())
+    size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
+    density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(axes, feats, cmaps):
         p = (
@@ -590,11 +649,11 @@ def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
 
     group_x = (
         x.T.join(annot)
-        .groupby(["density", "size"])
+        .groupby(["lipid_density", "lipid_size"])
         .mean()
         .mean(1)
         .to_frame("value")
-        .pivot_table(index="density", columns="size")["value"]
+        .pivot_table(index="lipid_density", columns="lipid_size")["value"]
     )
 
     # Plot
