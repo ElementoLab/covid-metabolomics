@@ -4,7 +4,8 @@
 Analysis of NMR data of metabolites from blood serum of COVID-19 patients.
 """
 
-import sys, argparse
+import sys
+import argparse
 
 from tqdm import tqdm
 import numpy as np
@@ -115,6 +116,9 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
     y["hospitalized"] = pd.Categorical(
         y["hospitalized"].replace({"no": False, "yes": True})
     )
+    y["intubated"] = pd.Categorical(
+        y["intubated"].replace({"not intubated": False, "intubated": True})
+    )
     y["patient_group"] = pd.Categorical(
         y["WHO_classification"].replace("mid", "mild"),
         ordered=True,
@@ -202,7 +206,8 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
 
 def get_nmr_feature_technical_robustness() -> DataFrame:
     """
-    Measure robustness of each variable based on repeated measuremnts or measurements of same individual.
+    Measure robustness of each variable based on repeated measuremnts or
+    measurements of same individual.
     """
     nightingale_rep_csv_f = metadata_dir / "nightingale_feature_robustness.csv"
     if not nightingale_rep_csv_f.exists():
@@ -284,7 +289,7 @@ def plot_nmr_technical_robustness() -> None:
     fig, ax = plt.subplots(figsize=(6, 4))
     cmap = sns.color_palette("tab20")
     for n, c in enumerate(cat.cat.categories):
-        p = rob.loc[cat == c]
+        p = annot.loc[cat == c]
         ax.scatter(p["CV"], p["R"], color=cmap[n], label=c, alpha=0.5)
     ax.set(xscale="log", xlabel="CV", ylabel="R^2")
     ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
@@ -292,12 +297,12 @@ def plot_nmr_technical_robustness() -> None:
         (results_dir / "nightingale_tech").mkdir() / "assay_robustness.svg", **figkws
     )
 
-    # Relate technical and biological variability
-    x, _ = get_x_y_nmr()
-    cv2 = ((x.std() / x.mean()) ** 2).rename("CV2")
+    # # Relate technical and biological variability
+    # x, _ = get_x_y_nmr()
+    # cv2 = ((x.std() / x.mean()) ** 2).rename("CV2")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.scatter(rob["R"] ** 6, cv2.reindex(rob.index), alpha=0.5)
+    # fig, ax = plt.subplots(figsize=(6, 4))
+    # ax.scatter(annot["R"] ** 6, cv2.reindex(annot.index), alpha=0.5)
 
 
 def plot_global_stats(x: DataFrame) -> None:
@@ -935,6 +940,7 @@ def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
         "sex",
         "obesity",
         "hospitalized",
+        "intubated",
         "patient_group",
         "WHO_score_sample",
         "alive",
@@ -1001,7 +1007,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
 
     # Collect fold-changes
     _changes = list()
-    for attr in ["hospitalized", "alive", "patient_group"]:
+    for attr in ["hospitalized", "intubated", "alive", "patient_group"]:
         stats = pd.read_csv(
             results_dir / "supervised" / f"supervised.{attr}.all_variables.stats.csv",
         )
@@ -1542,6 +1548,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         "obesity",
         "bmi",
         "hospitalized",
+        "intubated",
         "patient_group",
         "alive",
     ]
@@ -1980,6 +1987,7 @@ def integrate_nmr_flow() -> None:
     #         "dataset",
     #         "group",
     #         "hospitalized",
+    #         "intubated",
     #         "WHO_score_sample",
     #         "patient_code",
     #     ],

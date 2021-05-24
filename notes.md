@@ -121,10 +121,9 @@ Fat saturation and inflamation are related = Yes, 0.2136 in UKBB.
 
 ### TODO
 
-Clear heatmap of what is changing
+Clear rank vs fold + heatmap of what is changing
 
 Enrichment analysis
 
 Intubation treatment -> propofol has high lipid concentration
 See relationship between intubation and metabolite changes
-
