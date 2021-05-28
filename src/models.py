@@ -9,7 +9,7 @@ from anndata import AnnData
 
 from imc.types import DataFrame, Path
 
-__all__ = ["DataSet", "PyMDE", "DiffMap"]
+__all__ = ["DataSet", "PyMDE", "DiffMap", "AnnData"]
 
 
 @dataclass
@@ -17,6 +17,8 @@ class DataSet:
     x: DataFrame
     obs: DataFrame = None
     var: DataFrame = None
+    name: tp.Optional[str] = None
+    data_type: tp.Optional[str] = None
     attributes: tp.Sequence[str] = ()
     cmaps: tp.Dict[str, str] = field(default_factory=dict)
     palettes: tp.Dict[str, tp.Sequence[tp.Tuple[float, float, float, float]]] = field(
@@ -67,9 +69,7 @@ class PyMDE:
         if isinstance(x, pd.DataFrame):
             x = x.values
         embedding = (
-            pymde.preserve_neighbors(x, embedding_dim=embedding_dim, **kwargs)
-            .embed()
-            .numpy()
+            pymde.preserve_neighbors(x, embedding_dim=embedding_dim, **kwargs).embed().numpy()
         )
         return embedding
 

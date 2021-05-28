@@ -44,9 +44,7 @@ def main() -> int:
 
     summary_plots(d)
 
-    d.x = impute_x(np.log1p(d.x), frac_obs=0.25, frac_var=0.3)
-    d.obs = d.obs.reindex(index=d.x.index)
-    d.var = d.var.reindex(index=d.x.columns)
+    d = impute(d, frac_obs=0.25, frac_var=0.3)
 
     unsupervised(d.x, d.obs, attributes=attributes, data_type="takahashi")
     unsupervised2(d.x, d.obs, attributes)
@@ -139,6 +137,8 @@ def get_dataset() -> DataSet:
         x=x,
         obs=y,
         var=var,
+        name="takahashi",
+        data_type="immune",
         attributes=attributes,
         metadata_dir=metadata_dir,
         data_dir=data_dir,
@@ -159,6 +159,7 @@ def get_feature_annotations(x: DataFrame) -> DataFrame:
 
 @close_plots
 def summary_plots(d: DataSet) -> None:
+    output_prefix = output_dir / f"{d.name}.{d.data_type}.summary_plots."
 
     # Clinical data
     fig, axes = plt.subplots(1, 2, figsize=(2 * 3, 2))
@@ -168,9 +169,7 @@ def summary_plots(d: DataSet) -> None:
     )
     axes[0].set(title="All individuals", xlabel="Number of samples", ylabel="Frequency")
     axes[1].set(title="COVID-19 patients", xlabel="Number of samples", ylabel="Frequency")
-    fig.savefig(
-        output_dir / "summary_plots.samples_per_individual.histplot.svg", **figkws
-    )
+    fig.savefig(output_prefix + "samples_per_individual.histplot.svg", **figkws)
 
     fig, axes = plt.subplots(1, 2, figsize=(2 * 3, 2))
     sns.histplot(d.obs["DFSO"], ax=axes[0])
@@ -180,7 +179,7 @@ def summary_plots(d: DataSet) -> None:
     )
     axes[0].set(xlabel="Days from symptom onset", ylabel="Frequency")
     axes[1].set(xlabel="Interval between sampled timepoints (days)", ylabel="Frequency")
-    fig.savefig(output_dir / "summary_plots.frequency_of_sampling.histplot.svg", **figkws)
+    fig.savefig(output_prefix + "frequency_of_sampling.histplot.svg", **figkws)
 
     fig, axes = plt.subplots(3, 3, figsize=(3 * 4, 3 * 4))
     factors = ["Sex", "Clinical_score", "ICU"]
@@ -190,9 +189,7 @@ def summary_plots(d: DataSet) -> None:
         ax.set(xlabel=label)
     for ax in axes[0]:
         ax.set(title="Days from symptom onset")
-    fig.savefig(
-        output_dir / "summary_plots.time_bmi_age_severity.swarmboxenplot.svg", **figkws
-    )
+    fig.savefig(output_prefix + "time_bmi_age_severity.swarmboxenplot.svg", **figkws)
 
     # Data
     var = get_feature_annotations(d.x)
@@ -204,7 +201,7 @@ def summary_plots(d: DataSet) -> None:
         ax.set(xlabel=f"Missing data per {label} (%)", ylabel="Frequency")
     axes[0].axvline(50, linestyle="--", color="grey")
     axes[1].axvline(80, linestyle="--", color="grey")
-    fig.savefig(output_dir / "summary_plots.missing_data.histogram.svg", **figkws)
+    fig.savefig(output_prefix + "missing_data.histogram.svg", **figkws)
 
     # # Mean/variance relationship
     fig, axes = plt.subplots(1, 2, figsize=(2 * 4, 1 * 4))
@@ -229,29 +226,32 @@ def summary_plots(d: DataSet) -> None:
     vmax = max(d.x.mean().max(), d.x.std().max())
     ax.plot((vmin, vmax), (vmin, vmax), linestyle="--", color="grey")
     ax.set(xlabel="Mean", ylabel="Coefficient of variation")
-    fig.savefig(output_dir / "summary_plots.data_variance.scatterplot.svg", **figkws)
+    fig.savefig(output_prefix + "data_variance.scatterplot.svg", **figkws)
 
 
-def impute_x(
-    x: DataFrame,
+def impute(
+    d: DataSet,
+    log: bool = True,
     frac_obs: float = 0.8,
     frac_var: float = 0.5,
     method="factorization",
     save: bool = True,
-) -> DataFrame:
+) -> DataSet:
     from fancyimpute import MatrixFactorization, KNN
 
-    x_file = data_dir / "takahashi.imputed.csv"
+    x_file = data_dir / f"{d.name}.{d.data_type}.imputed.csv"
 
     if not x_file.exists():
-        null = x.isnull()
-        missing = (null.values.sum() / x.size) * 100
+        null = d.x.isnull()
+        missing = (null.values.sum() / d.x.size) * 100
         print(f"Dataset has {missing:.3f}% missing data.")  # 27.936%
 
         # First remove samples/vars with too many missing values
-        x2 = x.loc[
-            null.sum(1) / x.shape[1] < frac_obs, null.sum(0) / x.shape[0] < frac_var
+        x2 = d.x.loc[
+            null.sum(1) / d.x.shape[1] < frac_obs, null.sum(0) / d.x.shape[0] < frac_var
         ]
+        if log:
+            x2 = np.log1p(x2)
         if method == "factorization":
             model = MatrixFactorization(learning_rate=0.01, epochs=500, verbose=False)
         elif method == "knn":
@@ -266,9 +266,11 @@ def impute_x(
             x_imp.clip(lower=0).to_csv(x_file)
     else:
         print("Using pre-exising dataset.")
-    x_imp = pd.read_csv(x_file, index_col=0)
+    d.x = pd.read_csv(x_file, index_col=0)
 
-    return x_imp
+    d.obs = d.obs.reindex(index=d.x.index)
+    d.var = d.var.reindex(index=d.x.columns)
+    return d
 
 
 @close_plots

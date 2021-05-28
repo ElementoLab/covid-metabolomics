@@ -42,6 +42,7 @@ def unsupervised(
         attributes = list()
 
     output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
+    output_prefix = output_dir / f"unsupervised."
 
     ## Clustermaps
     for c in ["abs", "z"]:
@@ -52,10 +53,7 @@ def unsupervised(
             config=c,
             rasterized=True,
         )
-        grid.savefig(
-            output_dir / f"unsupervised.clustering.clustermap.{c}.svg",
-            **figkws,
-        )
+        grid.savefig(output_prefix + f"clustering.clustermap.{c}.svg", **figkws)
         plt.close(grid.fig)
     kws = dict(
         cmap="RdBu_r",
@@ -65,17 +63,11 @@ def unsupervised(
         yticklabels=False,
     )
     grid = clustermap(z_score(x).corr(), center=0, **kws, row_colors=var)
-    grid.savefig(
-        output_dir / "unsupervised.correlation_variable.clustermap.svg",
-        **figkws,
-    )
+    grid.savefig(output_prefix + "correlation_variable.clustermap.svg", **figkws)
     plt.close(grid.fig)
 
     grid = clustermap(z_score(x).T.corr(), **kws, row_colors=y[attributes])
-    grid.savefig(
-        output_dir / "unsupervised.correlation_samples.clustermap.svg",
-        **figkws,
-    )
+    grid.savefig(output_prefix + "correlation_samples.clustermap.svg", **figkws)
     plt.close(grid.fig)
 
     ## Dimres
@@ -101,10 +93,7 @@ def unsupervised(
                 continue
 
             fig = plot_projection(res, y, factors=attributes, algo_name=name, **pkwargs)
-            fig.savefig(
-                output_dir / f"unsupervised.dimres.{name}.{label}svg",
-                **figkws,
-            )
+            fig.savefig(output_prefix + f"dimres.{name}.{label}svg", **figkws)
             plt.close(fig)
 
 

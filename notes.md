@@ -27,6 +27,13 @@ Nightingale:
  - Dierckx et al: https://www.medrxiv.org/content/10.1101/2020.11.09.20228221v1 (no data, only supplement)
 
 
+Immunophenotyping, Cytokines, Chemokines:
+ - Lucas et al (10.1038/s41586-020-2588-y)
+ - Takahashi et al (10.1038/s41586-020-2700-3)
+
+Proteomics and Metabolomics:
+ - 10.1016/j.cell.2020.10.03
+
 Olink:
  - https://www.olink.com/mgh-covid-study/
  - https://info.olink.com/broad-covid-study-overview-download?submissionGuid=b5a527b0-09a7-4f3c-8532-e90674beb4e0

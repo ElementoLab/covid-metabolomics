@@ -21,7 +21,13 @@ from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot
 from seaborn_extensions.annotated_clustermap import is_numeric
 
 from src.config import *
-from src.ops import *
+from src.models import DataSet
+from src.ops import (
+    unsupervised,
+    get_explanatory_variables,
+    overlay_individuals_over_global,
+    plot_projection,
+)
 
 
 cli = None
@@ -45,8 +51,8 @@ def main(cli: tp.Sequence[str] = None) -> int:
 
     overlay_individuals_over_global(x1, y1, data_type="NMR")
 
-    attrs = [a for a in attributes if is_numeric(y1[a])]
-    supervised(x1, y1, attrs)
+    supervised(x1, y1, attributes)
+    supervised_joint(x1, y1, attributes)
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
 
     # Investigate NMR features
@@ -111,9 +117,7 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
     y["underlying_pulm_disease"] = pd.Categorical(
         y["Underlying_Pulm_disease"].replace({"no": False, "yes": True, "Yes": True})
     )
-    y["hospitalized"] = pd.Categorical(
-        y["hospitalized"].replace({"no": False, "yes": True})
-    )
+    y["hospitalized"] = pd.Categorical(y["hospitalized"].replace({"no": False, "yes": True}))
     y["intubated"] = pd.Categorical(
         y["intubated"].replace({"not intubated": False, "intubated": True})
     )
@@ -201,6 +205,8 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
 
     return x, y
 
+    return DataSet(x=x, obs=y, name="", data_type="NMR", var=get_nmr_feature_annotations())
+
 
 def get_nmr_feature_technical_robustness() -> DataFrame:
     """
@@ -215,9 +221,7 @@ def get_nmr_feature_technical_robustness() -> DataFrame:
         nightingale_rep_f = metadata_dir / "original" / "nmrm_app2.pdf"
 
         if not nightingale_rep_f.exists():
-            url = URL(
-                "https://biobank.ndph.ox.ac.uk/showcase/showcase/docs/nmrm_app2.pdf"
-            )
+            url = URL("https://biobank.ndph.ox.ac.uk/showcase/showcase/docs/nmrm_app2.pdf")
             req = url.get()
             with open(nightingale_rep_f, "wb") as handle:
                 handle.write(req.content)
@@ -246,13 +250,8 @@ def get_nmr_feature_technical_robustness() -> DataFrame:
                     pass
 
                 units = lines[end_line].split(" ")
-                perf = [
-                    r.strip().split(", R : ")
-                    for r in lines[start_line + 3].split("CV: ")[1:]
-                ]
-                res = pd.DataFrame(perf, index=features, columns=["CV", "R"]).assign(
-                    group=group
-                )
+                perf = [r.strip().split(", R : ") for r in lines[start_line + 3].split("CV: ")[1:]]
+                res = pd.DataFrame(perf, index=features, columns=["CV", "R"]).assign(group=group)
                 res["unit"] = units
                 print(res)
                 _res.append(res)
@@ -272,9 +271,7 @@ def get_nmr_feature_technical_robustness() -> DataFrame:
         res["subgroup"] = res["subgroup"].fillna(res["group"])
 
         # # Drop duplicates but pay attention to index
-        res = (
-            res.drop("group", axis=1).reset_index().drop_duplicates().set_index("feature")
-        )
+        res = res.drop("group", axis=1).reset_index().drop_duplicates().set_index("feature")
         res.to_csv(nightingale_rep_csv_f)
     robustness = pd.read_csv(nightingale_rep_csv_f, index_col=0)
     return robustness
@@ -292,9 +289,7 @@ def plot_nmr_technical_robustness() -> None:
         ax.scatter(p["CV"], p["R"], color=cmap[n], label=c, alpha=0.5)
     ax.set(xscale="log", xlabel="CV", ylabel="R^2")
     ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
-    fig.savefig(
-        (results_dir / "nightingale_tech").mkdir() / "assay_robustness.svg", **figkws
-    )
+    fig.savefig((results_dir / "nightingale_tech").mkdir() / "assay_robustness.svg", **figkws)
 
     # # Relate technical and biological variability
     # x, _ = get_x_y_nmr()
@@ -328,9 +323,7 @@ def plot_global_stats(x: DataFrame) -> None:
         ax.plot((0, v), (0, v), linestyle="--", color="grey")
     for ax in axes[1, :]:
         ax.loglog()
-    fig.savefig(
-        (results_dir / "nightingale_tech").mkdir() / "stat_properties.svg", **figkws
-    )
+    fig.savefig((results_dir / "nightingale_tech").mkdir() / "stat_properties.svg", **figkws)
 
 
 @close_plots
@@ -358,13 +351,9 @@ def get_flow_feature_annotations(x):
     project_dir = projects_dir / "covid-flowcyto"
 
     var_annot = json.load(open(project_dir / "metadata" / "panel_variables.json"))
-    feature_annotation = pd.DataFrame(
-        index=x.columns, columns=var_annot.keys(), dtype=bool
-    )
+    feature_annotation = pd.DataFrame(index=x.columns, columns=var_annot.keys(), dtype=bool)
     for group in var_annot:
-        feature_annotation.loc[
-            ~feature_annotation.index.isin(var_annot[group]), group
-        ] = False
+        feature_annotation.loc[~feature_annotation.index.isin(var_annot[group]), group] = False
     return feature_annotation
 
 
@@ -453,16 +442,14 @@ def get_nmr_feature_annotations() -> DataFrame:
     annot["metagroup"] = annot["group"]
     annot.loc[
         annot["group"].isin(lipoprots.keys())
-        | annot["group"].str.contains("Lipo|lipo|lipid")
-        & (annot["group"] != "Apolipoproteins"),
+        | annot["group"].str.contains("Lipo|lipo|lipid") & (annot["group"] != "Apolipoproteins"),
         "metagroup",
     ] = "Lipid"
 
     annot["lipid_class"] = np.nan
     for lipid_class in lipoprots:
         annot.loc[
-            annot.index.str.endswith(lipid_class)
-            | annot.index.str.endswith(lipid_class + "_pct"),
+            annot.index.str.endswith(lipid_class) | annot.index.str.endswith(lipid_class + "_pct"),
             "lipid_class",
         ] = lipoprots[lipid_class]
     annot["lipid_density"] = np.nan
@@ -481,9 +468,7 @@ def get_nmr_feature_annotations() -> DataFrame:
     annot["lipid_density"] = pd.Categorical(
         annot["lipid_density"], ordered=True, categories=densities.keys()
     )
-    annot["lipid_size"] = pd.Categorical(
-        annot["lipid_size"], ordered=True, categories=sizes.keys()
-    )
+    annot["lipid_size"] = pd.Categorical(annot["lipid_size"], ordered=True, categories=sizes.keys())
 
     # Type of measurement/transformation
     annot["measurement_type"] = "absolute"
@@ -552,11 +537,7 @@ def get_feature_network_knn(x: DataFrame, k: int = 15, **kwargs) -> DataFrame:
         x.shape[1],
         k,
     )
-    net = (
-        pd.DataFrame(connectivities.toarray(), x.columns, x.columns)
-        .sort_index(0)
-        .sort_index(1)
-    )
+    net = pd.DataFrame(connectivities.toarray(), x.columns, x.columns).sort_index(0).sort_index(1)
     np.fill_diagonal(net.values, 1.0)
     return net
 
@@ -572,28 +553,21 @@ def get_feature_network_correlation(x: DataFrame) -> DataFrame:
     p = pd.Series(get_probability_of_gaussian_mixture(corr_s, 3, 2), index=corr_s.index)
     p.loc[p_bin == False] = 0
 
-    net = (
-        p.rename_axis(["a", "b"])
-        .reset_index()
-        .pivot_table(index="a", columns="b", values=0)
-    )
+    net = p.rename_axis(["a", "b"]).reset_index().pivot_table(index="a", columns="b", values=0)
     np.fill_diagonal(net.values, 1.0)
     return net
 
 
 def get_feature_network_hierarchical(x: DataFrame) -> DataFrame:
     raise NotImplementedError
-    corr = z_score(x).corr()
-    grid = clustermap(corr, metric="correlation", cmap="RdBu_r", center=0)
-    plt.close(grid.fig)
-
-    return net
 
 
 @close_plots
 def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> DataFrame:
     # import networkx as nx
+    import scanpy as sc
     from imc.graphics import rasterize_scanpy
+    from src.models import PyMDE, AnnData
 
     output_dir = (results_dir / "feature_network").mkdir()
 
@@ -624,9 +598,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
 
     xx = z_score(x.drop(annot.query("measurement_type == 'relative'").index, axis=1))
 
-    annott = annot.loc[
-        xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")
-    ]
+    annott = annot.loc[xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")]
 
     stats = pd.read_csv(
         results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
@@ -639,24 +611,13 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     sc.tl.leiden(a)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
-    fig, ax = plt.subplots(
-        len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
-    )
+    fig, ax = plt.subplots(len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True)
     group_cmap = tab40(range(a.obs["group"].nunique()))[:, :3]
     size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
     density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
-    cmaps = (
-        [group_cmap.tolist(), "Paired"]
-        + [density_cmap, size_cmap]
-        + ["tab10"]
-        + ["coolwarm"]
-    )
+    cmaps = [group_cmap.tolist(), "Paired"] + [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        p = (
-            dict(cmap=cmap)
-            if a.obs[feat].dtype.name.startswith("float")
-            else dict(palette=cmap)
-        )
+        p = dict(cmap=cmap) if a.obs[feat].dtype.name.startswith("float") else dict(palette=cmap)
         sc.pl.umap(a, color=feat, **p, edges=True, ax=ax, show=False, s=50, alpha=0.5)
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
@@ -679,9 +640,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     ax = grid.ax_heatmap
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
     ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
-    grid.savefig(
-        output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws
-    )
+    grid.savefig(output_dir / "feature_annotation.network.scanpy.clustermap.svg", **figkws)
     plt.close(grid.fig)
 
     corr = z_score(xx).corr()
@@ -720,11 +679,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(axes, feats, cmaps):
-        p = (
-            dict(cmap=cmap)
-            if a.obs[feat].dtype.name.startswith("float")
-            else dict(palette=cmap)
-        )
+        p = dict(cmap=cmap) if a.obs[feat].dtype.name.startswith("float") else dict(palette=cmap)
         for j, embedding in enumerate(embeddings):
             sc.pl.embedding(
                 a,
@@ -739,9 +694,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
             )
     for ax in axes.flat:
         ax.set(xlabel="", ylabel="")
-    fig.savefig(
-        output_dir / "feature_annotation.network.scanpy.only_lipoproteins.svg", **figkws
-    )
+    fig.savefig(output_dir / "feature_annotation.network.scanpy.only_lipoproteins.svg", **figkws)
     plt.close(fig)
 
     import ringity
@@ -759,18 +712,14 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     ringity.plots.plot_nx(G, ax=ax1)
     ringity.plots.plot_seq(dgm, ax=ax2)
     ringity.plots.plot_dgm(dgm, ax=ax3)
-    fig.savefig(
-        output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws
-    )
+    fig.savefig(output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws)
     plt.close(fig)
 
     # Check the same on steady state only
     xx = x.loc[y.query("group == 'control'").index]
     xx = z_score(xx.drop(annot.query("measurement_type == 'relative'").index, axis=1))
     xx = xx.loc[:, annot.index[annot["subgroup"].str.endswith("DL")]]
-    annott = annot.loc[
-        xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")
-    ]
+    annott = annot.loc[xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")]
 
     an = AnnData(xx.T, obs=annott.join(change))
     sc.pp.neighbors(an, n_neighbors=15, use_rep="X")
@@ -778,25 +727,17 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     sc.tl.leiden(an)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
-    fig, ax = plt.subplots(
-        len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
-    )
+    fig, ax = plt.subplots(len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True)
     size_cmap = sns.color_palette("inferno", an.obs["lipid_size"].nunique())
     density_cmap = sns.color_palette("inferno", an.obs["lipid_density"].nunique())
     cmaps = ["tab20b", "Paired"] + [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        p = (
-            dict(cmap=cmap)
-            if an.obs[feat].dtype.name.startswith("float")
-            else dict(palette=cmap)
-        )
+        p = dict(cmap=cmap) if an.obs[feat].dtype.name.startswith("float") else dict(palette=cmap)
         sc.pl.umap(an, color=feat, **p, edges=True, ax=ax, show=False, s=50, alpha=0.5)
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
     rasterize_scanpy(fig)
-    fig.savefig(
-        output_dir / "feature_annotation.only_healthy.network.scanpy.svg", **figkws
-    )
+    fig.savefig(output_dir / "feature_annotation.only_healthy.network.scanpy.svg", **figkws)
     plt.close(fig)
 
     corr = z_score(xx)
@@ -830,8 +771,7 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
     ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
     grid.savefig(
-        output_dir
-        / "feature_annotation.only_healthy.network.scanpy.clustermap.symmetric.svg",
+        output_dir / "feature_annotation.only_healthy.network.scanpy.clustermap.symmetric.svg",
         **figkws,
     )
     plt.close(grid.fig)
@@ -915,7 +855,7 @@ def feature_physical_aggregate_change(x: DataFrame, y: DataFrame) -> None:
         plt.close(fig)
 
 
-def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
+def feature_properties_change(x: DataFrame, data_type: str = "NMR") -> None:
     """
     See relationship between feature properties and change with disease.
     """
@@ -977,7 +917,7 @@ def feature_properties_change(x: DataFrame, data_type: str = "NMR"):
     plt.close(fig)
 
 
-def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
+def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR") -> None:
     """
     See relationship between feature properties and pseudotime.
     """
@@ -1009,83 +949,109 @@ def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR"):
             axes[i, j].axhline(0, linestyle="--", color="grey")
             axes[i, j].set(title=col, ylabel="Correlation with pseudotime axis")
     fig.savefig(
-        output_dir
-        / "pseudotime_change.dependent_on_feature_properties.swarmboxenplot.svg",
+        output_dir / "pseudotime_change.dependent_on_feature_properties.swarmboxenplot.svg",
         **figkws,
     )
     plt.close(fig)
 
 
-def diffusion(x, y) -> None:
+# def diffusion(x, y) -> None:
 
-    a = AnnData(x, obs=y)
-    sc.pp.scale(a)
-    sc.pp.neighbors(a, use_rep="X")
-    sc.tl.diffmap(a)
-    a.uns["iroot"] = np.flatnonzero(a.obs["WHO_score_patient"] == 0)[0]
-    sc.tl.dpt(a)
-    # fix for https://github.com/theislab/scanpy/issues/409:
-    a.obs["dpt_order_indices"] = a.obs["dpt_pseudotime"].argsort()
-    a.uns["dpt_changepoints"] = np.ones(a.obs["dpt_order_indices"].shape[0] - 1)
+#     a = AnnData(x, obs=y)
+#     sc.pp.scale(a)
+#     sc.pp.neighbors(a, use_rep="X")
+#     sc.tl.diffmap(a)
+#     a.uns["iroot"] = np.flatnonzero(a.obs["WHO_score_patient"] == 0)[0]
+#     sc.tl.dpt(a)
+#     # fix for https://github.com/theislab/scanpy/issues/409:
+#     a.obs["dpt_order_indices"] = a.obs["dpt_pseudotime"].argsort()
+#     a.uns["dpt_changepoints"] = np.ones(a.obs["dpt_order_indices"].shape[0] - 1)
 
 
-def supervised(x, y, attributes, plot_all: bool = True) -> None:
+def supervised(
+    x: DataFrame,
+    y: DataFrame,
+    attributes: tp.Sequence[str],
+    plot_all: bool = True,
+    overwrite: bool = False,
+) -> None:
     import statsmodels.formula.api as smf
 
     output_dir = (results_dir / "supervised").mkdir()
 
-    for attribute in attributes:
+    # # convert ordinal categories to numeric
+    for attr in ["WHO_score_sample", "WHO_score_patient"]:
+        y[attr] = y[attr].cat.codes.astype(float).replace(-1, np.nan)
+    for attr in attributes:
+        if y[attr].dtype.name == "Int64":
+            y[attr] = y[attr].astype(float)
+    cats = list(filter(lambda w: ~is_numeric(y[w]), attributes))
+    nums = list(filter(lambda w: is_numeric(y[w]), attributes))
+
+    for attr in cats:
         # first just get the stats
         fig, stats = swarmboxenplot(
             data=x.join(y),
-            x=attribute,
+            x=attr,
             y=x.columns,
             swarm=False,
             boxen=False,
         )
         plt.close(fig)
         stats.to_csv(
-            output_dir / f"supervised.{attribute}.all_variables.stats.csv",
+            output_dir / f"supervised.{attr}.all_variables.stats.csv",
             index=False,
         )
 
         if plot_all:
             fig, stats = swarmboxenplot(
                 data=x.join(y),
-                x=attribute,
+                x=attr,
                 y=x.columns,
             )
             fig.savefig(
-                output_dir / f"supervised.{attribute}.all_variables.swarmboxenplot.svg",
+                output_dir / f"supervised.{attr}.all_variables.swarmboxenplot.svg",
                 **figkws,
             )
 
         # now plot top variables
-        fig, s2 = swarmboxenplot(
+        fig, _ = swarmboxenplot(
             data=x.join(y),
-            x=attribute,
+            x=attr,
             y=stats.sort_values("p-unc")["Variable"].head(20).unique(),
-            plot_kws=dict(palette=palettes.get(attribute)),
+            plot_kws=dict(palette=palettes.get(attr)),
         )
         fig.savefig(
-            output_dir / f"supervised.{attribute}.top_differential.swarmboxenplot.svg",
+            output_dir / f"supervised.{attr}.top_differential.swarmboxenplot.svg",
             **figkws,
         )
 
     # Use also a MLM and compare to GLM
+    for attr in tqdm(attributes, desc="attribute", position=0):
+        stats_f = output_dir / f"supervised.{attr}.model_fits.csv"
 
-    attrs = [x for x in attributes if is_numeric(y[x])]
-    for attribute in attrs:
-        stats_f = output_dir / f"supervised.{attribute}.model_fits.csv"
+        if not stats_f.exists() or overwrite:
+            data = z_score(x).join(y[[attr, "patient_code"]]).dropna(subset=[attr])
 
-        if not stats_f.exists():
-            # # Mixed effect
-            data = z_score(x).join(y).dropna(subset=[attribute, "WHO_score_sample"])
-            data["WHO_score_sample"] = data["WHO_score_sample"].cat.codes
+            # # GLM
+            _res_glm = list()
+            for feat in tqdm(x.columns, desc="feature", position=1):
+                mdf = smf.glm(f"{feat} ~ {attr}", data).fit()
+                res = (
+                    mdf.params.to_frame("coefs")
+                    .join(mdf.pvalues.rename("pvalues"))
+                    .assign(feature=feat)
+                )
+                res = res.loc[res.index.str.contains(attr)]
+                _res_glm.append(res)
+            res_glm = pd.concat(_res_glm)
+            res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+            # # # Mixed effect
             _res_mlm = list()
-            for feat in tqdm(x.columns):
+            for feat in tqdm(x.columns, desc="feature", position=2):
                 mdf = smf.mixedlm(
-                    f"{feat} ~ {attribute} * WHO_score_sample",
+                    f"{feat} ~ {attr}",
                     data,
                     groups=data["patient_code"],
                 ).fit()
@@ -1094,45 +1060,30 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
                     .join(mdf.pvalues.rename("pvalues"))
                     .assign(feature=feat)
                 )
-                res = res.loc[res.index.str.contains(attribute)]
+                res = res.loc[res.index.str.contains(attr)]
                 _res_mlm.append(res)
             res_mlm = pd.concat(_res_mlm)
-            # res_mlm['qvalues'] = pg.multicomp(res_mlm['pvalues'].values, method="fdr_bh")[1]
-            # res_mlm.loc[res_mlm.index.str.contains(":")].sort_values("pvalues")
-
-            # # GLM
-            _res_glm = list()
-            for feat in tqdm(x.columns):
-                mdf = smf.glm(f"{feat} ~ {attribute} + WHO_score_sample", data).fit()
-                res = (
-                    mdf.params.to_frame("coefs")
-                    .join(mdf.pvalues.rename("pvalues"))
-                    .assign(feature=feat)
-                )
-                res = res.loc[res.index.str.contains(attribute)]
-                _res_glm.append(res)
-            res_glm = pd.concat(_res_glm)
+            res_mlm["qvalues"] = pg.multicomp(res_mlm["pvalues"].values, method="fdr_bh")[1]
 
             res = pd.concat([res_mlm.assign(model="mlm"), res_glm.assign(model="glm")])
+            res = res.rename_axis(index="contrast")
             res.to_csv(stats_f)
 
     all_stats = pd.concat(
         [
             pd.read_csv(
-                output_dir / f"supervised.{attribute}.model_fits.csv",
+                output_dir / f"supervised.{attr}.model_fits.csv",
                 index_col=0,
-            ).assign(attribute=attribute)
-            for attribute in attrs
+            ).assign(attr=attr)
+            for attr in nums
         ]
     )
 
-    coef_mat = all_stats.reset_index().pivot_table(
-        index="feature", columns="index", values="coefs"
-    )
+    coef_mat = all_stats.reset_index().pivot_table(index="feature", columns="index", values="coefs")
 
     grid = clustermap(coef_mat, config="abs", cmap="RdBu_r", center=0, xticklabels=True)
 
-    for attribute in attrs:
+    for attribute in nums:
         stats_f = output_dir / f"supervised.{attribute}.model_fits.csv"
         res = pd.read_csv(stats_f, index_col=0)
 
@@ -1245,8 +1196,7 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         )
         grid.ax_heatmap.set(xlabel=f"Features (top 50 features for '{attribute}'")
         grid.fig.savefig(
-            output_dir
-            / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.svg",
+            output_dir / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.svg",
             **figkws,
         )
 
@@ -1262,10 +1212,286 @@ def supervised(x, y, attributes, plot_all: bool = True) -> None:
         )
         grid.ax_heatmap.set(xlabel=f"Features (top 50 features for '{attribute}'")
         grid.fig.savefig(
-            output_dir
-            / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.sorted.svg",
+            output_dir / f"supervised.{attribute}.Mixed_effect_models.clustermap.top_50.sorted.svg",
             **figkws,
         )
+
+
+def supervised_joint(
+    x: DataFrame,
+    y: DataFrame,
+    attributes: tp.Sequence[str],
+    plot_all: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """A single model of disease severity adjusted for various confounders."""
+    import statsmodels.formula.api as smf
+
+    output_dir = (results_dir / "supervised").mkdir()
+
+    # # convert ordinal categories to numeric
+    for attr in ["WHO_score_sample", "WHO_score_patient"]:
+        y[attr] = y[attr].cat.codes.astype(float).replace(-1, np.nan)
+    for attr in attributes:
+        if y[attr].dtype.name == "Int64":
+            y[attr] = y[attr].astype(float)
+    cats = list(filter(lambda w: ~is_numeric(y[w]), attributes))
+    nums = list(filter(lambda w: is_numeric(y[w]), attributes))
+
+    # Use also a MLM and compare to GLM
+    stats_f = output_dir / f"supervised.joint_model.model_fits.csv"
+
+    attrs = ["age", "race", "bmi", "WHO_score_sample"]
+    model_str = "{} ~ " + " + ".join(attrs)
+
+    if not stats_f.exists() or overwrite:
+        data = z_score(x).join(y[attrs + ["patient_code"]]).dropna(subset=attrs)
+
+        # # GLM
+        _res_glm = list()
+        for feat in tqdm(x.columns, desc="feature", position=1):
+            mdf = smf.glm(model_str.format(feat), data).fit()
+            res = (
+                mdf.params.to_frame("coefs")
+                .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+                .join(mdf.pvalues.rename("pvalues"))
+                .assign(feature=feat)
+            )
+            # res = res.loc[res.index.str.contains(attr)]
+            _res_glm.append(res)
+        res_glm = pd.concat(_res_glm)
+        res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+        # # # Mixed effect
+        _res_mlm = list()
+        for feat in tqdm(x.columns, desc="feature", position=2):
+            mdf = smf.mixedlm(model_str.format(feat), data, groups=data["patient_code"]).fit()
+            res = (
+                mdf.params.to_frame("coefs")
+                .join(mdf.pvalues.rename("pvalues"))
+                .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+                .assign(feature=feat)
+            )
+            # res = res.loc[res.index.str.contains(attr)]
+            _res_mlm.append(res)
+        res_mlm = pd.concat(_res_mlm)
+        res_mlm["qvalues"] = pg.multicomp(res_mlm["pvalues"].values, method="fdr_bh")[1]
+
+        res = pd.concat([res_mlm.assign(model="mlm"), res_glm.assign(model="glm")])
+        res = res.rename_axis(index="contrast")
+        res.to_csv(stats_f)
+
+    # Plot
+    attribute = "WHO_score_sample"
+    res = pd.read_csv(stats_f, index_col=0).loc[attribute]
+    assert np.allclose((res["ci_l"] - res["coefs"]).abs(), (res["ci_u"] - res["coefs"]).abs())
+    res["ci"] = res["coefs"] - res["ci_l"]
+
+    output_prefix = output_dir / f"supervised.joint_model.{attribute}."
+
+    res_glm = res.query("model == 'glm'").set_index("feature")
+    res_mlm = res.query("model == 'mlm'").set_index("feature")
+
+    cglm = res_glm["coefs"].rename("GLM")
+    cmlm = res_mlm["coefs"].rename("MLM")
+    c = cglm.to_frame().join(cmlm)
+    pglm = res_glm["pvalues"].rename("GLM")
+    pmlm = res_mlm["pvalues"].rename("MLM")
+    p = pglm.to_frame().join(pmlm)
+    q = p.copy()
+    for col in q:
+        q[col] = pg.multicomp(q[col].values, method="fdr_bh")[1]
+
+    # Compare models
+    v = c.abs().max()
+    v += v * 0.1
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    ax.plot((-v, v), (-v, v), linestyle="--", color="grey", zorder=-2)
+    ax.scatter(
+        c["GLM"],
+        c["MLM"],
+        c=p.mean(1),
+        cmap="Reds_r",
+        vmin=0,
+        vmax=1.5,
+        s=5,
+        alpha=0.5,
+    )
+    ax.set(
+        title=attribute,
+        xlabel=r"$\beta$   (GLM)",
+        ylabel=r"$\beta$   (MLM)",
+    )
+    fig.savefig(
+        output_prefix + "General_vs_Mixed_effect_model_comparison.scatter.svg",
+        **figkws,
+    )
+
+    # Plot all variables as rank vs change plot
+    # # check error is symmetric
+    var = get_nmr_feature_annotations().reindex(c.index)
+    cat = var["group"].astype(pd.CategoricalDtype())
+    cmap = sns.color_palette("tab20")
+    score = (-np.log10(res_mlm["qvalues"])) * (res_mlm["coefs"] > 0).astype(int).replace(0, -1)
+    ci = res_mlm["ci"].rename("MLM")
+    qmlm = res_mlm["qvalues"]
+    n_top = 10
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(6, 3 * 2))
+    for ax in fig.axes:
+        ax.axhline(0, linestyle="--", color="grey")
+    feats = (
+        score.sort_values().head(n_top).index.tolist()
+        + score.sort_values().tail(n_top).index.tolist()
+    )
+    for ax, crit, text in zip(fig.axes, [ci.index, feats], [False, True]):
+        rank = score.loc[crit].rank()
+        for i, group in enumerate(cat.unique()):
+            sel = (cat == group) & cat.index.to_series().rename("group").isin(rank.index)
+            # ax.errorbar(
+            #     rank.loc[sel],
+            #     score.loc[sel],
+            #     fmt="o",
+            #     yerr=ci.loc[sel],
+            #     color=cmap[i],
+            #     alpha=0.2,
+            # )
+            f = sel[sel].index
+            ax.scatter(
+                rank.loc[f],
+                score.loc[f],
+                color=cmap[i],
+                s=10 + 2.5 ** -np.log10(qmlm.loc[f]),
+                alpha=0.5,
+                label=group,
+            )
+            if text:
+                for idx in rank.loc[f].index:
+                    ax.text(rank.loc[idx], score.loc[idx], s=idx, rotation=90, ha="center")
+        v = (score.abs() + res_mlm["ci"]).max()
+        v += v * 0.1
+        ax.set(
+            title=attribute,
+            xlabel=r"Metabolites (ranked)",
+            ylabel=r"Change with COVID-10 severity (signed -log10(p-value))",
+            ylim=(-v, v),
+        )
+    ax0.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    from matplotlib.lines import Line2D
+
+    p = qmlm.min()
+    s0 = Line2D([0], [0], marker="o", label="1.0 (max)", markersize=np.sqrt(10 + 1))
+    s1 = Line2D(
+        [0],
+        [0],
+        marker="o",
+        label=f"{p:.3e} (min)",
+        markersize=np.sqrt(10 + 2.5 ** -np.log10(p)),
+    )
+    ax1.legend(handles=[s0, s1], title="FDR", loc="upper left", bbox_to_anchor=(1, 0))
+    ax1.axvline((ax1.get_xlim()[1] - ax1.get_xlim()[0]) / 2, linestyle="--", color="grey")
+    ax0.axvline(n_top, linestyle="--", color="grey")
+    ax0.axvline(score.shape[0] - n_top, linestyle="--", color="grey")
+    fig.savefig(
+        output_prefix + "rank_vs_change.scatter.svg",
+        **figkws,
+    )
+
+    # now plot top variables
+    feats = res_mlm.sort_values("pvalues").head(20).index
+    var = get_nmr_feature_annotations()
+    if y[attribute].dtype.name in ["object", "category"]:
+        fig = swarmboxenplot(
+            data=x.join(y),
+            x=attribute,
+            y=feats,
+            plot_kws=dict(palette=palettes.get(attribute)),
+            test=False,
+        )
+        for feat, ax in zip(feats, fig.axes):
+            ax.set(ylabel=var.loc[feat, "unit"])
+        fig.savefig(
+            output_prefix + "top_differential-Mixed_effect_models.swarmboxenplot.svg",
+            **figkws,
+        )
+    else:
+        from imc.graphics import get_grid_dims
+
+        fig = get_grid_dims(feats, return_fig=True, sharex=True)
+        for feat, ax in zip(feats, fig.axes):
+            sns.regplot(data=x.join(y), x=attribute, y=feat, ax=ax)
+            xl, xr = y[attribute].apply([min, max])
+            xl = min(-1, 0)
+            ax.set(
+                title=feat + f"; FDR = {p.loc[feat, 'MLM']:.2e}",
+                ylabel=var.loc[feat, "unit"],
+                xlim=(xl - xl * 0.1, xr + xr * 0.1),
+            )
+        fig.savefig(
+            output_prefix + "top_differential-Mixed_effect_models.regplot.svg",
+            **figkws,
+        )
+
+    # Plot volcano
+    data = res_mlm.rename(
+        columns={
+            "feature": "Variable",
+            "coefs": "hedges",
+            "pvalues": "p-unc",
+            "qvalues": "p-cor",
+        }
+    ).assign(A="Healthy", B="High COVID-19 severity")
+    fig = volcano_plot(
+        stats=data.reset_index(drop=True), diff_threshold=0.01, invert_direction=False
+    )
+    fig.savefig(
+        output_prefix + "Mixed_effect_models.volcano_plot.svg",
+        **figkws,
+    )
+
+    # Plot heatmap of differential only
+    n_top = 100
+    f = c.abs().sort_values("MLM").tail(n_top).index.drop_duplicates()
+    f = c.loc[f].sort_values("MLM").index.drop_duplicates()
+    stats = (
+        (-np.log10(p["MLM"].to_frame("-log10(p-value)")))
+        .join(c["MLM"].rename("Coefficient"))
+        .join((q["MLM"] < 0.05).to_frame("Significant"))
+        .groupby(level=0)
+        .mean()
+    )
+
+    so = score_signature(x, diff=stats["Coefficient"]).sort_values()
+
+    grid = clustermap(
+        x.loc[so.index, f],
+        config="z",
+        row_colors=y[attribute].to_frame().join(so),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"Mixed_effect_models.clustermap.top_{n_top}.svg",
+        **figkws,
+    )
+
+    grid = clustermap(
+        x.loc[so.index, f],
+        row_cluster=False,
+        col_cluster=False,
+        config="z",
+        row_colors=y[attribute].to_frame().join(so),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"Mixed_effect_models.clustermap.top_{n_top}.sorted.svg",
+        **figkws,
+    )
 
 
 def score_signature(x: DataFrame, diff: Series):
@@ -1601,9 +1827,7 @@ def assess_integration(
     if "umap" in algos:
         if subsample is not None:
             if "frac=" in subsample:
-                sel_cells = adata.obs.sample(
-                    frac=float(subsample.split("frac=")[1])
-                ).index
+                sel_cells = adata.obs.sample(frac=float(subsample.split("frac=")[1])).index
             elif "n=" in subsample:
                 sel_cells = adata.obs.sample(n=int(subsample.split("n=")[1])).index
             adata = adata[sel_cells]
@@ -1622,17 +1846,13 @@ def assess_integration(
         attrs = [attr for attr in attributes if attr != "dataset"]
         sel = adata.obs.groupby(attrs)["dataset"].nunique() >= 2
         sel = sel.reset_index().drop("dataset", 1)
-        adata = adata[
-            pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :
-        ]
+        adata = adata[pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :]
 
     scores: tp.Dict[str, tp.Dict[str, float]] = dict()
     for i, algo in enumerate(algos):
         scores[algo] = dict()
         for j, attr in enumerate(attributes):
-            scores[algo][attr] = silhouette_score(
-                adata.obsm[f"X_{algo}"], adata.obs[attr]
-            )
+            scores[algo][attr] = silhouette_score(adata.obsm[f"X_{algo}"], adata.obs[attr])
 
     if not plot:
         return scores
@@ -1694,9 +1914,7 @@ def predict_outcomes() -> None:
             # ElasticNet: "coef_",
             LinearSVC: "coef_",
         }
-        kws = dict(
-            cv=10, scoring="roc_auc", return_train_score=True, return_estimator=True
-        )
+        kws = dict(cv=10, scoring="roc_auc", return_train_score=True, return_estimator=True)
 
         # # Randomize order of both X and y (jointly)
         # X = X.sample(frac=1.0).copy()
@@ -1799,8 +2017,7 @@ def predict_outcomes() -> None:
                     ],
                 ).rename_axis(index="iteration")
                 scores.to_csv(
-                    output_dir
-                    / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv"
+                    output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv"
                 )
 
     label = ""
