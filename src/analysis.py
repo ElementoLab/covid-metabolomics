@@ -53,6 +53,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
 
     supervised(x1, y1, attributes)
     supervised_joint(x1, y1, attributes)
+    feature_enrichment()
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
 
     # Investigate NMR features
@@ -1525,6 +1526,128 @@ def score_signature(x: DataFrame, diff: Series):
         + (xz[down].mean(axis=1) * (float(down.size) / n))
     ).rename("signature_score")
     return scores
+
+
+def feature_enrichment() -> None:
+    output_dir = (results_dir / "supervised").mkdir()
+
+    stats_f = output_dir / "supervised.joint_model.model_fits.csv"
+    stats = pd.read_csv(stats_f, index_col=0).query("model == 'mlm'")
+    var = get_nmr_feature_annotations()
+    groups = ["metagroup", "group", "subgroup", "lipid_class", "lipid_density", "lipid_size"]
+
+    # Using PAGE
+    _res = list()
+    libraries = var_to_dict(var[groups])
+    for contrast in stats.index.drop("Intercept").unique():
+        s = stats.loc[contrast].set_index("feature")
+        enr = page(s["coefs"], libraries)
+        _res.append(enr.assign(contrast=contrast))
+    res = pd.concat(_res)
+    res["q"] = pg.multicomp(res["p"].values, method="fdr_bh")[1]
+    res.to_csv(output_dir / "enrichment.page.csv")
+
+    # # Plot
+    res = pd.read_csv(output_dir / "enrichment.page.csv", index_col=0)
+    p = res.query("contrast == 'WHO_score_sample'")
+    p = p.rename(columns={"term": "Variable", "Z": "hedges", "p": "p-unc", "q": "p-cor"})
+    p = p.groupby("Variable").mean().reset_index()
+    fig = volcano_plot(
+        p.assign(A="Healthy", B="High COVID-19 severity"),
+        diff_threshold=None,
+        n_top=15,
+        invert_direction=False,
+    )
+    fig.savefig(output_dir / "enrichment.page.volcano_plot.svg", **figkws)
+
+    # Using overrepresentation test
+    _res = list()
+    for contrast in stats.index.drop("Intercept").unique():
+        s = stats.loc[contrast].set_index("feature")
+        enr = enrich_categorical(s, var[groups], directional=True)
+        _res.append(enr.assign(contrast=contrast))
+    res = pd.concat(_res)
+    res.to_csv(output_dir / "enrichment.chi2_independence.csv", index=False)
+
+    # # Plot
+    res = pd.read_csv(output_dir / "enrichment.chi2_independence.csv")
+    p = res.query("contrast == 'WHO_score_sample' & test == 'log-likelihood'").sort_values("pval")
+    p = p.rename(
+        columns={"attribute_item": "Variable", "cramer": "hedges", "pval": "p-unc", "qval": "p-cor"}
+    )
+    p = p.groupby("Variable").mean().reset_index()
+    fig = volcano_plot(
+        p.assign(A="Healthy", B="High COVID-19 severity"),
+        diff_threshold=None,
+        n_top=15,
+        invert_direction=False,
+    )
+    fig.savefig(output_dir / "enrichment.chi2_independence.volcano_plot.svg", **figkws)
+
+
+def enrich_categorical(
+    data: DataFrame, var: DataFrame, diff_threshold: float = 0.05, directional: bool = False
+) -> DataFrame:
+    data = data.copy()
+    data["diff"] = False
+    sig = data["qvalues"] < diff_threshold
+    data.loc[sig, "diff"] = True
+    if directional:
+        direction = data["coefs"] > 0
+        data.loc[sig & direction, "direction"] = "up"
+        data.loc[sig & ~direction, "direction"] = "down"
+    else:
+        data["direction"] = "all"
+
+    if data["diff"].sum() == 0:
+        print("No significant features.")
+        return pd.DataFrame()
+
+    _res = list()
+    for col in var:
+        _res2 = list()
+        for item in var[col].unique():
+            for direction in data["direction"].unique():
+                data["in_item"] = (var[col] == item) & (data["direction"] == direction)
+                _, _, stats = pg.chi2_independence(data=data, x="in_item", y="diff")
+                _res2.append(stats.assign(direction=direction, attribute=col, attribute_item=item))
+        res2 = pd.concat(_res2)
+        res2["qval"] = pg.multicomp(res2["pval"].values, method="fdr_bh")[1]
+        _res.append(res2)
+    res = pd.concat(_res)
+    return res
+
+
+def var_to_dict(var: DataFrame) -> tp.Dict:
+    gsl = dict()
+    for col in var:
+        gs = dict()
+        for val in var[col].dropna().unique():
+            gs[val] = var.loc[var[col] == val].index.tolist()
+        gsl[col] = gs
+    return gsl
+
+
+def page(parameter_vector: Series, gene_set_libraries: tp.Dict) -> DataFrame:
+    from scipy import stats
+
+    results = dict()
+    for lib in gene_set_libraries:
+        for gs, genes in gene_set_libraries[lib].items():
+            μ = parameter_vector.mean()
+            δ = parameter_vector.std()
+            Sm = parameter_vector.reindex(genes).mean()
+            m = parameter_vector.shape[0]
+            # Get Z-scores
+            Z = (Sm - μ) * (m ** (1 / 2)) / δ
+            # Get P-values
+            p = stats.norm.sf(abs(Z)) * 2
+            results[(lib, gs)] = [μ, δ, Sm, m, Z, p]
+    return (
+        pd.DataFrame(results, index=["μ", "δ", "Sm", "m", "Z", "p"])
+        .T.sort_values("p")
+        .rename_axis(index=["database", "term"])
+    )
 
 
 def get_x_y_flow() -> tp.Tuple[DataFrame, DataFrame]:
