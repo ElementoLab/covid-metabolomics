@@ -1240,7 +1240,7 @@ def supervised_joint(
     nums = list(filter(lambda w: is_numeric(y[w]), attributes))
 
     # Use also a MLM and compare to GLM
-    stats_f = output_dir / f"supervised.joint_model.model_fits.csv"
+    stats_f = output_dir / "supervised.joint_model.model_fits.csv"
 
     attrs = ["age", "race", "bmi", "WHO_score_sample"]
     model_str = "{} ~ " + " + ".join(attrs)
@@ -1399,6 +1399,13 @@ def supervised_joint(
     )
 
     # now plot top variables
+    # # Add healthy (UKbb) range
+    try:
+        exp = pd.read_csv(metadata_dir / "ukbb.feature_range.csv", index_col=0)
+    except FileNotFoundError:
+        exp = pd.DataFrame(index=x.columns, columns=["mean", "ci_lower", "ci_upper"])
+
+    y[attribute] = y[attribute].astype(pd.CategoricalDtype(ordered=True))
     feats = res_mlm.sort_values("pvalues").head(20).index
     var = get_nmr_feature_annotations()
     if y[attribute].dtype.name in ["object", "category"]:
@@ -1411,6 +1418,27 @@ def supervised_joint(
         )
         for feat, ax in zip(feats, fig.axes):
             ax.set(ylabel=var.loc[feat, "unit"])
+
+            # Add healthy (UKbb) range
+            base = exp.reindex([feat]).squeeze()
+            if base.isnull().all():
+                continue
+            ax.axhline(base["mean"], linestyle="--", color="grey", linewidth=0.5)
+            px = y[attribute].cat.categories
+            px = [px.min() - 1] + y[attribute].cat.categories.tolist() + [px.max() + 1]
+            n = len(px)
+            for i in range(1, 4):
+                py1 = base["mean"] - base["std"] * i
+                py2 = base["mean"] + base["std"] * i
+                ax.fill_between(
+                    px,
+                    [py1] * n,
+                    [py2] * n,
+                    color="grey",
+                    alpha=0.1,
+                    zorder=-100 - i,
+                    edgecolor=None,
+                )
         fig.savefig(
             output_prefix + "top_differential-Mixed_effect_models.swarmboxenplot.svg",
             **figkws,
@@ -2022,21 +2050,27 @@ def predict_outcomes() -> None:
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
     from sklearn.feature_selection import SelectKBest, mutual_info_classif
-    from sklearn.linear_model import LogisticRegression
+    from sklearn.linear_model import LogisticRegression, ElasticNet
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.ensemble import RandomForestClassifier
-    from sklearn.svm import LinearSVC
+    from sklearn.svm import LinearSVC, NuSVC
+    from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
     from sklearn.model_selection import cross_validate
 
     from joblib import Parallel, delayed
 
     def fit(_, model, X, y, k=None):
-        feature_attr = {
-            RandomForestClassifier: "feature_importances_",
-            LogisticRegression: "coef_",
-            # ElasticNet: "coef_",
-            LinearSVC: "coef_",
-        }
+        from collections import defaultdict
+
+        feature_attr = defaultdict(lambda: None)
+        feature_attr.update(
+            {
+                RandomForestClassifier: "feature_importances_",
+                LogisticRegression: "coef_",
+                ElasticNet: "coef_",
+                LinearSVC: "coef_",
+            }
+        )
         kws = dict(cv=10, scoring="roc_auc", return_train_score=True, return_estimator=True)
 
         # # Randomize order of both X and y (jointly)
@@ -2064,25 +2098,27 @@ def predict_outcomes() -> None:
 
         # Extract coefficients/feature importances
         feat = feature_attr[clf.__class__]
-        coefs = tuple()
-        for out in [out1, out2]:
-            co = pd.DataFrame(
-                [
-                    pd.Series(
-                        getattr(c["classifier"], feat),
-                        index=X.columns[c["selector"].get_support()]
-                        if k is not None
-                        else X.columns,
-                    )
-                    for c in out["estimator"]
-                ]
-            )
-            # If keeping all variables, simply report mean
-            if k is None:
-                coefs += (co.mean(0),)
-            # otherwise, simply count how often variable was chosen at all
-            else:
-                coefs += ((~co.isnull()).sum(),)
+        coefs = (np.nan, np.nan)
+        if feat is not None:
+            coefs = tuple()
+            for out in [out1, out2]:
+                co = pd.DataFrame(
+                    [
+                        pd.Series(
+                            getattr(c["classifier"], feat).squeeze(),
+                            index=X.columns[c["selector"].get_support()]
+                            if k is not None
+                            else X.columns,
+                        )
+                        for c in out["estimator"]
+                    ]
+                )
+                # If keeping all variables, simply report mean
+                if k is None:
+                    coefs += (co.mean(0),)
+                # otherwise, simply count how often variable was chosen at all
+                else:
+                    coefs += ((~co.isnull()).sum(),)
         return (
             out1["train_score"].mean(),
             out1["test_score"].mean(),
@@ -2106,28 +2142,29 @@ def predict_outcomes() -> None:
     target = m["patient_group"].cat.remove_unused_categories().cat.codes
 
     # Align
-    xz1 = xz1.loc[target.index]
-    xz2 = xz2.loc[target.index]
+    xz1 = xz1.reindex(target.index)
+    xz2 = xz2.reindex(target.index)
 
     # # For the other classifiers
     N = 100
 
     insts = [
         RandomForestClassifier,
-        # LogisticRegression,
-        # LinearSVC,
-        # ElasticNet,
+        LogisticRegression,
+        LinearSVC,
+        ElasticNet,
+        NuSVC,
+        QuadraticDiscriminantAnalysis,
     ]
-    for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
-        for label, k in [("", None), (".feature_selection", 8)]:
-            for model in insts:
+    for label, k in [("", None), (".feature_selection", 8)]:
+        for model in insts:
+            for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
                 name = str(type(model())).split(".")[-1][:-2]
-                print(name)
+                print(name, dtype)
 
                 # Fit
                 res = Parallel(n_jobs=-1)(
-                    delayed(fit)(i, model=RandomForestClassifier, X=X, y=target, k=k)
-                    for i in range(N)
+                    delayed(fit)(i, model=model, X=X, y=target, k=k) for i in range(N)
                 )
                 # Get ROC_AUC scores only
                 scores = pd.DataFrame(
@@ -2143,45 +2180,46 @@ def predict_outcomes() -> None:
                     output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv"
                 )
 
-    label = ""
-    k = None
-    name = str(type(model())).split(".")[-1][:-2]
-    _res = list()
-    for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
-        scores = pd.read_csv(
-            output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv",
-            index_col=0,
+    for model in insts:
+        label = ""
+        k = None
+        name = str(type(model())).split(".")[-1][:-2]
+        _res = list()
+        for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
+            scores = pd.read_csv(
+                output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv",
+                index_col=0,
+            )
+            p = scores.loc[:, scores.columns.str.contains("test")].melt()
+            _res.append(p.assign(dataset=dtype))
+        res = pd.concat(_res)
+        res["dataset"] = pd.Categorical(
+            res["dataset"], categories=["NMR", "flow_cytometry", "combined"]
         )
-        p = scores.loc[:, scores.columns.str.contains("test")].melt()
-        _res.append(p.assign(dataset=dtype))
-    res = pd.concat(_res)
-    res["dataset"] = pd.Categorical(
-        res["dataset"], categories=["NMR", "flow_cytometry", "combined"]
-    )
-    res["variable"] = pd.Categorical(
-        res["variable"], categories=["test_score_random", "test_score"]
-    )
+        res["variable"] = pd.Categorical(
+            res["variable"], categories=["test_score_random", "test_score"]
+        )
 
-    fig, _ = swarmboxenplot(data=res, x="variable", hue="dataset", y="value")
-    fig.axes[0].axhline(0.5, linestyle="--", color="grey")
-    fig.savefig(
-        output_dir
-        / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.svg",
-        **figkws,
-    )
+        fig, _ = swarmboxenplot(data=res, x="variable", hue="dataset", y="value")
+        fig.axes[0].axhline(0.5, linestyle="--", color="grey")
+        fig.savefig(
+            output_dir
+            / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.svg",
+            **figkws,
+        )
 
-    p = res.query("variable == 'test_score'")
-    fig, _ = swarmboxenplot(data=p, x="dataset", y="value")
-    fig.axes[0].axhline(0.5, linestyle="--", color="grey")
+        p = res.query("variable == 'test_score'")
+        fig, _ = swarmboxenplot(data=p, x="dataset", y="value")
+        fig.axes[0].axhline(0.5, linestyle="--", color="grey")
 
-    s = p.groupby("dataset")["value"].mean().squeeze()
-    for i, q in enumerate(s.index):
-        fig.axes[0].text(i, 0.7, s=f"{s[q]:.3f}", ha="center")
-    fig.savefig(
-        output_dir
-        / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
-        **figkws,
-    )
+        s = p.groupby("dataset")["value"].mean().squeeze()
+        for i, q in enumerate(s.index):
+            fig.axes[0].text(i, 0.7, s=f"{s[q]:.3f}", ha="center")
+        fig.savefig(
+            output_dir
+            / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
+            **figkws,
+        )
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():

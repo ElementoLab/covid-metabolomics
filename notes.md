@@ -28,11 +28,11 @@ Nightingale:
 
 
 Immunophenotyping, Cytokines, Chemokines:
- - Lucas et al (10.1038/s41586-020-2588-y)
- - Takahashi et al (10.1038/s41586-020-2700-3)
+ - Lucas et al (https://doi.org/10.1038/s41586-020-2588-y)
+ - Takahashi et al (https://doi.org/10.1038/s41586-020-2700-3)
 
 Proteomics and Metabolomics:
- - 10.1016/j.cell.2020.10.03
+ - https://doi.org/10.1016/j.cell.2020.10.03
 
 Olink:
  - https://www.olink.com/mgh-covid-study/

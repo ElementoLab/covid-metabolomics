@@ -1,0 +1,169 @@
+ukbb_id,name,feature_type,feature,abbreviation,name,subgroup,description,group,metagroup,density,size,measurement_type
+23400,Total Cholesterol,NMR metabolomics - Blood assays - Biological samples,Total_C,Total-C,Total-C,Cholesterol,Total cholesterol,Cholesterol,Lipid,,,absolute
+23401,Total Cholesterol Minus HDL-C,NMR metabolomics - Blood assays - Biological samples,non_HDL_C,non-HDL-C,non-HDL-C,Cholesterol,Total cholesterol minus HDL-C,Cholesterol,Lipid,HDL,,absolute
+23402,"Remnant Cholesterol (Non-HDL, Non-LDL -Cholesterol)",NMR metabolomics - Blood assays - Biological samples,Remnant_C,Remnant-C,Remnant-C,Cholesterol,"Remnant cholesterol (non-HDL, non-LDL -cholesterol)",Cholesterol,Lipid,,,absolute
+23403,VLDL Cholesterol,NMR metabolomics - Blood assays - Biological samples,VLDL_C,VLDL-C,VLDL-C,Cholesterol,VLDL cholesterol,Cholesterol,Lipid,VLDL,,absolute
+23404,Clinical LDL Cholesterol,NMR metabolomics - Blood assays - Biological samples,Clinical_LDL_C,Clinical LDL-C,Clinical LDL-C,Cholesterol,Clinical LDL cholesterol,Cholesterol,Lipid,LDL,,absolute
+23405,LDL Cholesterol,NMR metabolomics - Blood assays - Biological samples,LDL_C,LDL-C,LDL-C,Cholesterol,LDL cholesterol,Cholesterol,Lipid,LDL,,absolute
+23406,HDL Cholesterol,NMR metabolomics - Blood assays - Biological samples,HDL_C,HDL-C,HDL-C,Cholesterol,HDL cholesterol,Cholesterol,Lipid,HDL,,absolute
+23407,Total Triglycerides,NMR metabolomics - Blood assays - Biological samples,Total_TG,Total-TG,Total triglycerides,Triglycerides,Total triglycerides,Triglycerides,Lipid,,,absolute
+23408,Triglycerides in VLDL,NMR metabolomics - Blood assays - Biological samples,VLDL_TG,VLDL-TG,VLDL-TG,Triglycerides,Triglycerides in VLDL,Triglycerides,Lipid,VLDL,,absolute
+23409,Triglycerides in LDL,NMR metabolomics - Blood assays - Biological samples,LDL_TG,LDL-TG,LDL-TG,Triglycerides,Triglycerides in LDL,Triglycerides,Lipid,LDL,,absolute
+23410,Triglycerides in HDL,NMR metabolomics - Blood assays - Biological samples,HDL_TG,HDL-TG,HDL-TG,Triglycerides,Triglycerides in HDL,Triglycerides,Lipid,HDL,,absolute
+23411,Total Phospholipids in Lipoprotein Particles,NMR metabolomics - Blood assays - Biological samples,Total_PL,Total-PL,Total-PL,Phospholipids,Total phospholipids in lipoprotein particles,Phospholipids,Lipid,,,absolute
+23412,Phospholipids in VLDL,NMR metabolomics - Blood assays - Biological samples,VLDL_PL,VLDL-PL,VLDL-PL,Phospholipids,Phospholipids in VLDL,Phospholipids,Lipid,VLDL,,absolute
+23413,Phospholipids in LDL,NMR metabolomics - Blood assays - Biological samples,LDL_PL,LDL-PL,LDL-PL,Phospholipids,Phospholipids in LDL,Phospholipids,Lipid,LDL,,absolute
+23414,Phospholipids in HDL,NMR metabolomics - Blood assays - Biological samples,HDL_PL,HDL-PL,HDL-PL,Phospholipids,Phospholipids in HDL,Phospholipids,Lipid,HDL,,absolute
+23415,Total Esterified Cholesterol,NMR metabolomics - Blood assays - Biological samples,Total_CE,Total-CE,Total-CE,Cholesteryl esters,Total esterified cholesterol,Cholesteryl esters,Lipid,,,absolute
+23416,Cholesteryl Esters in VLDL,NMR metabolomics - Blood assays - Biological samples,VLDL_CE,VLDL-CE,VLDL-CE,Cholesteryl esters,Cholesteryl esters in VLDL,Cholesteryl esters,Lipid,VLDL,,absolute
+23417,Cholesteryl Esters in LDL,NMR metabolomics - Blood assays - Biological samples,LDL_CE,LDL-CE,LDL-CE,Cholesteryl esters,Cholesteryl esters in LDL,Cholesteryl esters,Lipid,LDL,,absolute
+23418,Cholesteryl Esters in HDL,NMR metabolomics - Blood assays - Biological samples,HDL_CE,HDL-CE,HDL-CE,Cholesteryl esters,Cholesteryl esters in HDL,Cholesteryl esters,Lipid,HDL,,absolute
+23419,Total Free Cholesterol,NMR metabolomics - Blood assays - Biological samples,Total_FC,Total-FC,Total-FC,Free cholesterol,Total free cholesterol,Free cholesterol,Lipid,,,absolute
+23420,Free Cholesterol in VLDL,NMR metabolomics - Blood assays - Biological samples,VLDL_FC,VLDL-FC,VLDL-FC,Free cholesterol,Free cholesterol in VLDL,Free cholesterol,Lipid,VLDL,,absolute
+23421,Free Cholesterol in LDL,NMR metabolomics - Blood assays - Biological samples,LDL_FC,LDL-FC,LDL-FC,Free cholesterol,Free cholesterol in LDL,Free cholesterol,Lipid,LDL,,absolute
+23422,Free Cholesterol in HDL,NMR metabolomics - Blood assays - Biological samples,HDL_FC,HDL-FC,HDL-FC,Free cholesterol,Free cholesterol in HDL,Free cholesterol,Lipid,HDL,,absolute
+23423,Total Lipids in Lipoprotein Particles,NMR metabolomics - Blood assays - Biological samples,Total_L,Total-L,Total-L,Total lipids,Total lipids in lipoprotein particles,Total lipids,Lipid,,,absolute
+23424,Total Lipids in VLDL,NMR metabolomics - Blood assays - Biological samples,VLDL_L,VLDL-L,VLDL-L,Total lipids,Total lipids in VLDL,Total lipids,Lipid,VLDL,,absolute
+23425,Total Lipids in LDL,NMR metabolomics - Blood assays - Biological samples,LDL_L,LDL-L,LDL-L,Total lipids,Total lipids in LDL,Total lipids,Lipid,LDL,,absolute
+23426,Total Lipids in HDL,NMR metabolomics - Blood assays - Biological samples,HDL_L,HDL-L,HDL-L,Total lipids,Total lipids in HDL,Total lipids,Lipid,HDL,,absolute
+23427,Total Concentration of Lipoprotein Particles,NMR metabolomics - Blood assays - Biological samples,Total_P,Total-P,Total-P,Lipoprotein particle concentrations,Total concentration of lipoprotein particles,Lipoprotein particle concentrations,Lipid,,,absolute
+23428,Concentration of VLDL Particles,NMR metabolomics - Blood assays - Biological samples,VLDL_P,VLDL-P,VLDL-P,Lipoprotein particle concentrations,Concentration of VLDL particles,Lipoprotein particle concentrations,Lipid,VLDL,,absolute
+23429,Concentration of LDL Particles,NMR metabolomics - Blood assays - Biological samples,LDL_P,LDL-P,LDL-P,Lipoprotein particle concentrations,Concentration of LDL particles,Lipoprotein particle concentrations,Lipid,LDL,,absolute
+23430,Concentration of HDL Particles,NMR metabolomics - Blood assays - Biological samples,HDL_P,HDL-P,HDL-P,Lipoprotein particle concentrations,Concentration of HDL particles,Lipoprotein particle concentrations,Lipid,HDL,,absolute
+23431,Average Diameter for VLDL Particles,NMR metabolomics - Blood assays - Biological samples,VLDL_size,VLDL size,VLDL particle size,Lipoprotein particle sizes,Average diameter for VLDL particles,Lipoprotein particle sizes,Lipid,VLDL,,absolute
+23432,Average Diameter for LDL Particles,NMR metabolomics - Blood assays - Biological samples,LDL_size,LDL size,LDL particle size,Lipoprotein particle sizes,Average diameter for LDL particles,Lipoprotein particle sizes,Lipid,LDL,,absolute
+23433,Average Diameter for HDL Particles,NMR metabolomics - Blood assays - Biological samples,HDL_size,HDL size,HDL particle size,Lipoprotein particle sizes,Average diameter for HDL particles,Lipoprotein particle sizes,Lipid,HDL,,absolute
+23434,Phosphoglycerides,NMR metabolomics - Blood assays - Biological samples,Phosphoglyc,Phosphoglyc,Phosphoglycerides,Other lipids,Phosphoglycerides,Other lipids,Lipid,,,absolute
+23436,Total Cholines,NMR metabolomics - Blood assays - Biological samples,Cholines,Cholines,Total cholines,Other lipids,Total cholines,Other lipids,Lipid,,,absolute
+23437,Phosphatidylcholines,NMR metabolomics - Blood assays - Biological samples,Phosphatidylc,Phosphatidylc,Phosphatidylcholines,Other lipids,Phosphatidylcholines,Other lipids,Lipid,,,absolute
+23438,Sphingomyelins,NMR metabolomics - Blood assays - Biological samples,Sphingomyelins,Sphingomyelins,Sphingomyelins,Other lipids,Sphingomyelins,Other lipids,Lipid,,,absolute
+23439,Apolipoprotein B,NMR metabolomics - Blood assays - Biological samples,ApoB,ApoB,ApoB,Apolipoproteins,Apolipoprotein B,Apolipoproteins,Lipid,,,absolute
+23440,Apolipoprotein A1,NMR metabolomics - Blood assays - Biological samples,ApoA1,ApoA1,ApoA1,Apolipoproteins,Apolipoprotein A1,Apolipoproteins,Lipid,,,absolute
+23442,Total Fatty Acids,NMR metabolomics - Blood assays - Biological samples,Total_FA,Total-FA,Total fatty acids,Fatty acids,Total fatty acids,Fatty acids,Fatty acids,,,absolute
+23443,Degree of Unsaturation,NMR metabolomics - Blood assays - Biological samples,Unsaturation,Unsaturation,Unsaturation,Fatty acids,Degree of unsaturation,Fatty acids,Fatty acids,,,absolute
+23444,Omega-3 Fatty Acids,NMR metabolomics - Blood assays - Biological samples,Omega_3,Omega-3,Omega-3,Fatty acids,Omega-3 fatty acids,Fatty acids,Fatty acids,,,absolute
+23445,Omega-6 Fatty Acids,NMR metabolomics - Blood assays - Biological samples,Omega_6,Omega-6,Omega-6,Fatty acids,Omega-6 fatty acids,Fatty acids,Fatty acids,,,absolute
+23446,Polyunsaturated Fatty Acids,NMR metabolomics - Blood assays - Biological samples,PUFA,PUFA,PUFA,Fatty acids,Polyunsaturated fatty acids,Fatty acids,Fatty acids,,,absolute
+23447,Monounsaturated Fatty Acids,NMR metabolomics - Blood assays - Biological samples,MUFA,MUFA,MUFA,Fatty acids,Monounsaturated fatty acids,Fatty acids,Fatty acids,,,absolute
+23448,Saturated Fatty Acids,NMR metabolomics - Blood assays - Biological samples,SFA,SFA,SFA,Fatty acids,Saturated fatty acids,Fatty acids,Fatty acids,,,absolute
+23449,Linoleic Acid,NMR metabolomics - Blood assays - Biological samples,LA,LA,LA,Fatty acids,Linoleic acid,Fatty acids,Fatty acids,,,absolute
+23450,Docosahexaenoic Acid,NMR metabolomics - Blood assays - Biological samples,DHA,DHA,DHA,Fatty acids,Docosahexaenoic acid,Fatty acids,Fatty acids,,,absolute
+23460,Alanine,NMR metabolomics - Blood assays - Biological samples,Ala,Ala,Alanine,Amino acids,Alanine,Amino acids,Amino acids,,,absolute
+23461,Glutamine,NMR metabolomics - Blood assays - Biological samples,Gln,Gln,Glutamine,Amino acids,Glutamine,Amino acids,Amino acids,,,absolute
+23462,Glycine,NMR metabolomics - Blood assays - Biological samples,Gly,Gly,Glycine,Amino acids,Glycine,Amino acids,Amino acids,,,absolute
+23463,Histidine,NMR metabolomics - Blood assays - Biological samples,His,His,Histidine,Amino acids,Histidine,Amino acids,Amino acids,,,absolute
+23464,Total Concentration of Branched-Chain Amino Acids (Leucine + Isoleucine + Valine),NMR metabolomics - Blood assays - Biological samples,Total_BCAA,Total BCAA,Total BCAA,Branched-chain amino acids,Total concentration of branched-chain amino acids (leucine + isoleucine + valine),Amino acids,Amino acids,,,absolute
+23465,Isoleucine,NMR metabolomics - Blood assays - Biological samples,Ile,Ile,Isoleucine,Branched-chain amino acids,Isoleucine,Amino acids,Amino acids,,,absolute
+23466,Leucine,NMR metabolomics - Blood assays - Biological samples,Leu,Leu,Leucine,Branched-chain amino acids,Leucine,Amino acids,Amino acids,,,absolute
+23467,Valine,NMR metabolomics - Blood assays - Biological samples,Val,Val,Valine,Branched-chain amino acids,Valine,Amino acids,Amino acids,,,absolute
+23468,Phenylalanine,NMR metabolomics - Blood assays - Biological samples,Phe,Phe,Phenylalanine,Aromatic amino acids,Phenylalanine,Amino acids,Amino acids,,,absolute
+23469,Tyrosine,NMR metabolomics - Blood assays - Biological samples,Tyr,Tyr,Tyrosine,Aromatic amino acids,Tyrosine,Amino acids,Amino acids,,,absolute
+23470,Glucose,NMR metabolomics - Blood assays - Biological samples,Glucose,Glucose,Glucose,Glycolysis related metabolites,Glucose,Glycolysis related metabolites,Glycolysis related metabolites,,,absolute
+23471,Lactate,NMR metabolomics - Blood assays - Biological samples,Lactate,Lactate,Lactate,Glycolysis related metabolites,Lactate,Glycolysis related metabolites,Glycolysis related metabolites,,,absolute
+23472,Pyruvate,NMR metabolomics - Blood assays - Biological samples,Pyruvate,Pyruvate,Pyruvate,Glycolysis related metabolites,Pyruvate,Glycolysis related metabolites,Glycolysis related metabolites,,,absolute
+23473,Citrate,NMR metabolomics - Blood assays - Biological samples,Citrate,Citrate,Citrate,Glycolysis related metabolites,Citrate,Glycolysis related metabolites,Glycolysis related metabolites,,,absolute
+23474,3-Hydroxybutyrate,NMR metabolomics - Blood assays - Biological samples,bOHbutyrate,bOHbutyrate,3-Hydroxybutyrate,Ketone bodies,3-Hydroxybutyrate,Ketone bodies,Ketone bodies,,,absolute
+23475,Acetate,NMR metabolomics - Blood assays - Biological samples,Acetate,Acetate,Acetate,Ketone bodies,Acetate,Ketone bodies,Ketone bodies,,,absolute
+23476,Acetoacetate,NMR metabolomics - Blood assays - Biological samples,Acetoacetate,Acetoacetate,Acetoacetate,Ketone bodies,Acetoacetate,Ketone bodies,Ketone bodies,,,absolute
+23477,Acetone,NMR metabolomics - Blood assays - Biological samples,Acetone,Acetone,Acetone,Ketone bodies,Acetone,Ketone bodies,Ketone bodies,,,absolute
+23478,Creatinine,NMR metabolomics - Blood assays - Biological samples,Creatinine,Creatinine,Creatinine,Fluid balance,Creatinine,Fluid balance,Fluid balance,,,absolute
+23479,Albumin,NMR metabolomics - Blood assays - Biological samples,Albumin,Albumin,Albumin,Fluid balance,Albumin,Fluid balance,Fluid balance,,,absolute
+23480,Glycoprotein Acetyls,NMR metabolomics - Blood assays - Biological samples,GlycA,GlycA,Glycoprotein acetyls,Inflammation,Glycoprotein acetyls,Inflammation,Inflammation,,,absolute
+23481,Concentration of Chylomicrons and Extremely Large VLDL Particles,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_P,XXL-VLDL-P,XXL-VLDL-P,Chylomicrons and extremely large VLDL,Concentration of chylomicrons and extremely large VLDL particles,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23482,Total Lipids in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_L,XXL-VLDL-L,XXL-VLDL-L,Chylomicrons and extremely large VLDL,Total lipids in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23483,Phospholipids in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_PL,XXL-VLDL-PL,XXL-VLDL-PL,Chylomicrons and extremely large VLDL,Phospholipids in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23484,Cholesterol in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_C,XXL-VLDL-C,XXL-VLDL-C,Chylomicrons and extremely large VLDL,Cholesterol in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23485,Cholesteryl Esters in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_CE,XXL-VLDL-CE,XXL-VLDL-CE,Chylomicrons and extremely large VLDL,Cholesteryl esters in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23486,Free Cholesterol in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_FC,XXL-VLDL-FC,XXL-VLDL-FC,Chylomicrons and extremely large VLDL,Free cholesterol in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23487,Triglycerides in Chylomicrons and Extremely Large VLDL,NMR metabolomics - Blood assays - Biological samples,XXL_VLDL_TG,XXL-VLDL-TG,XXL-VLDL-TG,Chylomicrons and extremely large VLDL,Triglycerides in chylomicrons and extremely large VLDL,Lipoprotein subclasses,Lipid,VLDL,XXL,absolute
+23488,Concentration of Very Large VLDL Particles,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_P,XL-VLDL-P,XL-VLDL-P,Very large VLDL,Concentration of very large VLDL particles,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23489,Total Lipids in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_L,XL-VLDL-L,XL-VLDL-L,Very large VLDL,Total lipids in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23490,Phospholipids in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_PL,XL-VLDL-PL,XL-VLDL-PL,Very large VLDL,Phospholipids in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23491,Cholesterol in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_C,XL-VLDL-C,XL-VLDL-C,Very large VLDL,Cholesterol in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23492,Cholesteryl Esters in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_CE,XL-VLDL-CE,XL-VLDL-CE,Very large VLDL,Cholesteryl esters in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23493,Free Cholesterol in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_FC,XL-VLDL-FC,XL-VLDL-FC,Very large VLDL,Free cholesterol in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23494,Triglycerides in Very Large VLDL,NMR metabolomics - Blood assays - Biological samples,XL_VLDL_TG,XL-VLDL-TG,XL-VLDL-TG,Very large VLDL,Triglycerides in very large VLDL,Lipoprotein subclasses,Lipid,VLDL,XL,absolute
+23495,Concentration of Large VLDL Particles,NMR metabolomics - Blood assays - Biological samples,L_VLDL_P,L-VLDL-P,L-VLDL-P,Large VLDL,Concentration of large VLDL particles,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23496,Total Lipids in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_L,L-VLDL-L,L-VLDL-L,Large VLDL,Total lipids in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23497,Phospholipids in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_PL,L-VLDL-PL,L-VLDL-PL,Large VLDL,Phospholipids in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23498,Cholesterol in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_C,L-VLDL-C,L-VLDL-C,Large VLDL,Cholesterol in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23499,Cholesteryl Esters in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_CE,L-VLDL-CE,L-VLDL-CE,Large VLDL,Cholesteryl esters in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23500,Free Cholesterol in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_FC,L-VLDL-FC,L-VLDL-FC,Large VLDL,Free cholesterol in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23501,Triglycerides in Large VLDL,NMR metabolomics - Blood assays - Biological samples,L_VLDL_TG,L-VLDL-TG,L-VLDL-TG,Large VLDL,Triglycerides in large VLDL,Lipoprotein subclasses,Lipid,VLDL,L,absolute
+23502,Concentration of Medium VLDL Particles,NMR metabolomics - Blood assays - Biological samples,M_VLDL_P,M-VLDL-P,M-VLDL-P,Medium VLDL,Concentration of medium VLDL particles,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23503,Total Lipids in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_L,M-VLDL-L,M-VLDL-L,Medium VLDL,Total lipids in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23504,Phospholipids in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_PL,M-VLDL-PL,M-VLDL-PL,Medium VLDL,Phospholipids in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23505,Cholesterol in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_C,M-VLDL-C,M-VLDL-C,Medium VLDL,Cholesterol in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23506,Cholesteryl Esters in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_CE,M-VLDL-CE,M-VLDL-CE,Medium VLDL,Cholesteryl esters in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23507,Free Cholesterol in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_FC,M-VLDL-FC,M-VLDL-FC,Medium VLDL,Free cholesterol in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23508,Triglycerides in Medium VLDL,NMR metabolomics - Blood assays - Biological samples,M_VLDL_TG,M-VLDL-TG,M-VLDL-TG,Medium VLDL,Triglycerides in medium VLDL,Lipoprotein subclasses,Lipid,VLDL,M,absolute
+23509,Concentration of Small VLDL Particles,NMR metabolomics - Blood assays - Biological samples,S_VLDL_P,S-VLDL-P,S-VLDL-P,Small VLDL,Concentration of small VLDL particles,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23510,Total Lipids in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_L,S-VLDL-L,S-VLDL-L,Small VLDL,Total lipids in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23511,Phospholipids in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_PL,S-VLDL-PL,S-VLDL-PL,Small VLDL,Phospholipids in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23512,Cholesterol in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_C,S-VLDL-C,S-VLDL-C,Small VLDL,Cholesterol in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23513,Cholesteryl Esters in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_CE,S-VLDL-CE,S-VLDL-CE,Small VLDL,Cholesteryl esters in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23514,Free Cholesterol in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_FC,S-VLDL-FC,S-VLDL-FC,Small VLDL,Free cholesterol in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23515,Triglycerides in Small VLDL,NMR metabolomics - Blood assays - Biological samples,S_VLDL_TG,S-VLDL-TG,S-VLDL-TG,Small VLDL,Triglycerides in small VLDL,Lipoprotein subclasses,Lipid,VLDL,S,absolute
+23516,Concentration of Very Small VLDL Particles,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_P,XS-VLDL-P,XS-VLDL-P,Very small VLDL,Concentration of very small VLDL particles,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23517,Total Lipids in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_L,XS-VLDL-L,XS-VLDL-L,Very small VLDL,Total lipids in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23518,Phospholipids in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_PL,XS-VLDL-PL,XS-VLDL-PL,Very small VLDL,Phospholipids in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23519,Cholesterol in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_C,XS-VLDL-C,XS-VLDL-C,Very small VLDL,Cholesterol in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23520,Cholesteryl Esters in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_CE,XS-VLDL-CE,XS-VLDL-CE,Very small VLDL,Cholesteryl esters in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23521,Free Cholesterol in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_FC,XS-VLDL-FC,XS-VLDL-FC,Very small VLDL,Free cholesterol in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23522,Triglycerides in Very Small VLDL,NMR metabolomics - Blood assays - Biological samples,XS_VLDL_TG,XS-VLDL-TG,XS-VLDL-TG,Very small VLDL,Triglycerides in very small VLDL,Lipoprotein subclasses,Lipid,VLDL,XS,absolute
+23523,Concentration of IDL Particles,NMR metabolomics - Blood assays - Biological samples,IDL_P,IDL-P,IDL-P,IDL,Concentration of IDL particles,Lipoprotein subclasses,Lipid,IDL,,absolute
+23524,Total Lipids in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_L,IDL-L,IDL-L,IDL,Total lipids in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23525,Phospholipids in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_PL,IDL-PL,IDL-PL,IDL,Phospholipids in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23526,Cholesterol in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_C,IDL-C,IDL-C,IDL,Cholesterol in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23527,Cholesteryl Esters in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_CE,IDL-CE,IDL-CE,IDL,Cholesteryl esters in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23528,Free Cholesterol in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_FC,IDL-FC,IDL-FC,IDL,Free cholesterol in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23529,Triglycerides in IDL,NMR metabolomics - Blood assays - Biological samples,IDL_TG,IDL-TG,IDL-TG,IDL,Triglycerides in IDL,Lipoprotein subclasses,Lipid,IDL,,absolute
+23530,Concentration of Large LDL Particles,NMR metabolomics - Blood assays - Biological samples,L_LDL_P,L-LDL-P,L-LDL-P,Large LDL,Concentration of large LDL particles,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23531,Total Lipids in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_L,L-LDL-L,L-LDL-L,Large LDL,Total lipids in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23532,Phospholipids in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_PL,L-LDL-PL,L-LDL-PL,Large LDL,Phospholipids in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23533,Cholesterol in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_C,L-LDL-C,L-LDL-C,Large LDL,Cholesterol in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23534,Cholesteryl Esters in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_CE,L-LDL-CE,L-LDL-CE,Large LDL,Cholesteryl esters in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23535,Free Cholesterol in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_FC,L-LDL-FC,L-LDL-FC,Large LDL,Free cholesterol in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23536,Triglycerides in Large LDL,NMR metabolomics - Blood assays - Biological samples,L_LDL_TG,L-LDL-TG,L-LDL-TG,Large LDL,Triglycerides in large LDL,Lipoprotein subclasses,Lipid,LDL,L,absolute
+23537,Concentration of Medium LDL Particles,NMR metabolomics - Blood assays - Biological samples,M_LDL_P,M-LDL-P,M-LDL-P,Medium LDL,Concentration of medium LDL particles,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23538,Total Lipids in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_L,M-LDL-L,M-LDL-L,Medium LDL,Total lipids in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23539,Phospholipids in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_PL,M-LDL-PL,M-LDL-PL,Medium LDL,Phospholipids in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23540,Cholesterol in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_C,M-LDL-C,M-LDL-C,Medium LDL,Cholesterol in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23541,Cholesteryl Esters in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_CE,M-LDL-CE,M-LDL-CE,Medium LDL,Cholesteryl esters in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23542,Free Cholesterol in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_FC,M-LDL-FC,M-LDL-FC,Medium LDL,Free cholesterol in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23543,Triglycerides in Medium LDL,NMR metabolomics - Blood assays - Biological samples,M_LDL_TG,M-LDL-TG,M-LDL-TG,Medium LDL,Triglycerides in medium LDL,Lipoprotein subclasses,Lipid,LDL,M,absolute
+23544,Concentration of Small LDL Particles,NMR metabolomics - Blood assays - Biological samples,S_LDL_P,S-LDL-P,S-LDL-P,Small LDL,Concentration of small LDL particles,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23545,Total Lipids in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_L,S-LDL-L,S-LDL-L,Small LDL,Total lipids in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23546,Phospholipids in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_PL,S-LDL-PL,S-LDL-PL,Small LDL,Phospholipids in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23547,Cholesterol in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_C,S-LDL-C,S-LDL-C,Small LDL,Cholesterol in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23548,Cholesteryl Esters in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_CE,S-LDL-CE,S-LDL-CE,Small LDL,Cholesteryl esters in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23549,Free Cholesterol in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_FC,S-LDL-FC,S-LDL-FC,Small LDL,Free cholesterol in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23550,Triglycerides in Small LDL,NMR metabolomics - Blood assays - Biological samples,S_LDL_TG,S-LDL-TG,S-LDL-TG,Small LDL,Triglycerides in small LDL,Lipoprotein subclasses,Lipid,LDL,S,absolute
+23551,Concentration of Very Large HDL Particles,NMR metabolomics - Blood assays - Biological samples,XL_HDL_P,XL-HDL-P,XL-HDL-P,Very large HDL,Concentration of very large HDL particles,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23552,Total Lipids in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_L,XL-HDL-L,XL-HDL-L,Very large HDL,Total lipids in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23553,Phospholipids in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_PL,XL-HDL-PL,XL-HDL-PL,Very large HDL,Phospholipids in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23554,Cholesterol in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_C,XL-HDL-C,XL-HDL-C,Very large HDL,Cholesterol in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23555,Cholesteryl Esters in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_CE,XL-HDL-CE,XL-HDL-CE,Very large HDL,Cholesteryl esters in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23556,Free Cholesterol in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_FC,XL-HDL-FC,XL-HDL-FC,Very large HDL,Free cholesterol in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23557,Triglycerides in Very Large HDL,NMR metabolomics - Blood assays - Biological samples,XL_HDL_TG,XL-HDL-TG,XL-HDL-TG,Very large HDL,Triglycerides in very large HDL,Lipoprotein subclasses,Lipid,HDL,XL,absolute
+23558,Concentration of Large HDL Particles,NMR metabolomics - Blood assays - Biological samples,L_HDL_P,L-HDL-P,L-HDL-P,Large HDL,Concentration of large HDL particles,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23559,Total Lipids in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_L,L-HDL-L,L-HDL-L,Large HDL,Total lipids in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23560,Phospholipids in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_PL,L-HDL-PL,L-HDL-PL,Large HDL,Phospholipids in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23561,Cholesterol in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_C,L-HDL-C,L-HDL-C,Large HDL,Cholesterol in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23562,Cholesteryl Esters in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_CE,L-HDL-CE,L-HDL-CE,Large HDL,Cholesteryl esters in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23563,Free Cholesterol in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_FC,L-HDL-FC,L-HDL-FC,Large HDL,Free cholesterol in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23564,Triglycerides in Large HDL,NMR metabolomics - Blood assays - Biological samples,L_HDL_TG,L-HDL-TG,L-HDL-TG,Large HDL,Triglycerides in large HDL,Lipoprotein subclasses,Lipid,HDL,L,absolute
+23565,Concentration of Medium HDL Particles,NMR metabolomics - Blood assays - Biological samples,M_HDL_P,M-HDL-P,M-HDL-P,Medium HDL,Concentration of medium HDL particles,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23566,Total Lipids in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_L,M-HDL-L,M-HDL-L,Medium HDL,Total lipids in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23567,Phospholipids in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_PL,M-HDL-PL,M-HDL-PL,Medium HDL,Phospholipids in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23568,Cholesterol in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_C,M-HDL-C,M-HDL-C,Medium HDL,Cholesterol in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23569,Cholesteryl Esters in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_CE,M-HDL-CE,M-HDL-CE,Medium HDL,Cholesteryl esters in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23570,Free Cholesterol in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_FC,M-HDL-FC,M-HDL-FC,Medium HDL,Free cholesterol in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23571,Triglycerides in Medium HDL,NMR metabolomics - Blood assays - Biological samples,M_HDL_TG,M-HDL-TG,M-HDL-TG,Medium HDL,Triglycerides in medium HDL,Lipoprotein subclasses,Lipid,HDL,M,absolute
+23572,Concentration of Small HDL Particles,NMR metabolomics - Blood assays - Biological samples,S_HDL_P,S-HDL-P,S-HDL-P,Small HDL,Concentration of small HDL particles,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23573,Total Lipids in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_L,S-HDL-L,S-HDL-L,Small HDL,Total lipids in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23574,Phospholipids in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_PL,S-HDL-PL,S-HDL-PL,Small HDL,Phospholipids in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23575,Cholesterol in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_C,S-HDL-C,S-HDL-C,Small HDL,Cholesterol in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23576,Cholesteryl Esters in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_CE,S-HDL-CE,S-HDL-CE,Small HDL,Cholesteryl esters in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23577,Free Cholesterol in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_FC,S-HDL-FC,S-HDL-FC,Small HDL,Free cholesterol in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute
+23578,Triglycerides in Small HDL,NMR metabolomics - Blood assays - Biological samples,S_HDL_TG,S-HDL-TG,S-HDL-TG,Small HDL,Triglycerides in small HDL,Lipoprotein subclasses,Lipid,HDL,S,absolute

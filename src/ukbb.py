@@ -11,8 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-from imc.types import DataFrame
+from imc.types import DataFrame, Series
 from imc.utils import z_score
 from seaborn_extensions import clustermap, swarmboxenplot
 
@@ -26,6 +25,7 @@ cli = None
 def main(cli: tp.Sequence[str] = None) -> int:
     """The main function to run the analysis."""
     x, y = get_x_y_nmr()
+
     plot_global_stats(x)
     feature_abundance_by_physical_properties(x)
 
@@ -37,6 +37,44 @@ def main(cli: tp.Sequence[str] = None) -> int:
 
     # Fin
     return 0
+
+
+def get_healthy_range():
+    """
+    Get range of variables in ukbb.
+    Including relative variables!
+    """
+
+    def ci(x: Series) -> tp.Tuple[float, float]:
+        import scipy.stats as st
+
+        return st.t.interval(0.95, len(x) - 1, loc=np.mean(x), scale=st.sem(x))
+
+    q, _ = get_x_y_nmr()
+    ids = pd.read_csv(metadata_dir / "feature_names_ids.csv").set_index("Biomarker_name")
+    x_var = pd.read_csv(metadata_dir / "ukbb_var_id_mapping.csv").set_index("ukbb_id")
+    formulas = pd.read_table(
+        "https://biobank.ndph.ox.ac.uk/ukb/ukb/docs/Nightingale_ratio_calculation.tsv"
+    )
+    for _, row in formulas.iterrows():
+        f1 = row["Numerator_Field_ID"]
+        f2 = row["Denominator_Field_ID"]
+        fn1 = x_var.loc[f1]["feature"]
+        fn2 = x_var.loc[f2]["feature"]
+        r = q[fn1] / q[fn2]
+        if row["Unit"] == "%":
+            r *= 100
+        n = ids.loc[row["Biomarker_name"]]["Variable"]
+        q[n] = r
+
+    # # export mean/CI to later use
+    s = (
+        q.apply(ci)
+        .rename(index={0: "ci_lower", 1: "ci_upper"})
+        .T.join(q.mean().rename("mean"))
+        .join(q.std().rename("std"))
+    )
+    s.to_csv(metadata_dir / "ukbb.feature_range.csv")
 
 
 def get_feature_names_from_ukbbid(ids: tp.List[int]) -> tp.List[tp.Tuple[str, str]]:
@@ -112,10 +150,7 @@ def get_x_y_nmr(transformation="imputed") -> tp.Tuple[DataFrame, DataFrame]:
         # # in the absence of more info, I'll reduce them
         x = df.T.groupby(ids[~feat_filter]).mean().T
         x_var = (
-            desc.assign(ukbb_id=ids)
-            .drop_duplicates()
-            .set_index("ukbb_id")
-            .loc[x.columns.values]
+            desc.assign(ukbb_id=ids).drop_duplicates().set_index("ukbb_id").loc[x.columns.values]
         )
 
         x_annot = get_nmr_feature_annotations().query("measurement_type == 'absolute'")
@@ -161,9 +196,27 @@ def plot_global_stats(x: DataFrame) -> None:
         ax.plot((0, v), (0, v), linestyle="--", color="grey")
     for ax in axes[1, :]:
         ax.loglog()
-    fig.savefig(
-        (results_dir / "nightingale_tech").mkdir() / "stat_properties.svg", **figkws
-    )
+    fig.savefig((results_dir / "nightingale_tech").mkdir() / "stat_properties.svg", **figkws)
+
+    # # Plot examples across the range of mean
+    # n_bins = 12
+    # bins = pd.cut(mean[mean <= mean.quantile(0.95)], n_bins)
+
+    # fig, axes = plt.subplots(1, n_bins, figsize=(3 * n_bins, 3))
+    # for ax, _bin in zip(axes, bins.cat.categories):
+    #     sel = bins.loc[bins == _bin].index[0]
+    #     sns.histplot(x.loc[:, sel], ax=ax)
+    #     ax.set_title(_bin)
+
+    # n_bins = 10
+    # n = 10000
+    # var = 1
+    # params = np.linspace(0, mean.quantile(0.95), n_bins)
+    # fig, axes = plt.subplots(1, n_bins, figsize=(3 * n_bins, 3))
+    # for p, ax in zip(params, axes):
+    #     d = scipy.stats.norm(p, var).rvs(n)
+    #     d[d < 0] = 0
+    #     sns.histplot(d, ax=ax)
 
 
 def feature_abundance_by_physical_properties(x: DataFrame) -> None:
@@ -198,6 +251,34 @@ def model_data(x: DataFrame, y: DataFrame):
     https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.exponnorm.html#scipy.stats.exponnorm
     https://docs.pymc.io/api/distributions/continuous.html#pymc3.distributions.continuous.ExGaussian
     """
+    from src.analysis import get_nmr_feature_technical_robustness
+    import pymc3 as pm
+
+    n_indiv = 2_000
+    sel_indiv = (x.std(1) / x.mean(1)).sort_values().tail(n_indiv).index
+
+    n = x.shape[1]
+    with pm.Model() as exg_model:
+        mu = pm.Normal("mu", sigma=20, shape=n)
+        sigma = pm.HalfCauchy("sigma", beta=10, testval=1.0, shape=n)
+        nu = pm.HalfCauchy("nu", beta=10, testval=1.0, shape=n)
+        exg = pm.ExGaussian("exg", mu=mu, sigma=sigma, nu=nu, observed=x.loc[sel_indiv])
+
+    with exg_model:
+        approx = pm.fit()
+        # trace = pm.sample()  # slooow
+
+    # pm.plot_trace(trace)
+
+    trace = approx.sample(10_000)
+    mu = pd.Series(trace["mu"].mean(0), x.columns)
+    sigma = pd.Series(trace["sigma"].mean(0), x.columns)
+    nu = pd.Series(trace["nu"].mean(0), x.columns)
+
+    rob = get_nmr_feature_technical_robustness().join(sigma.rename("sigma"))
+
+    fig, ax = plt.subplots()
+    ax.scatter(rob["CV"], rob["sigma"])
 
     import statsmodels.api as sm
 
@@ -274,8 +355,7 @@ def unsupervised(
             rasterized=True,
         )
         grid.savefig(
-            output_dir
-            / f"unsupervised.clustering.clustermap.top_{n_indiv}_indiv.{c}.svg",
+            output_dir / f"unsupervised.clustering.clustermap.top_{n_indiv}_indiv.{c}.svg",
             **figkws,
         )
     kws = dict(
@@ -344,12 +424,7 @@ def supervised(x, y):
     # compare results between cohorts
     a.obs["result"] = a.obs["result"].astype(str).astype(pd.CategoricalDtype())
     sc.tl.rank_genes_groups(a, "result")
-    res = (
-        rank_genes_groups_df(a)
-        .loc["1.0"]
-        .set_index("names")
-        .sort_values("logfoldchanges")
-    )
+    res = rank_genes_groups_df(a).loc["1.0"].set_index("names").sort_values("logfoldchanges")
 
     stats = pd.read_csv(
         results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
@@ -386,9 +461,7 @@ def get_feature_network(x: DataFrame) -> DataFrame:
 
     xx = z_score(x)
 
-    annott = annot.loc[
-        xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")
-    ]
+    annott = annot.loc[xx.columns, (annot.nunique() > 1) & ~annot.columns.str.contains("_")]
 
     stats = pd.read_csv(
         results_dir / "supervised" / "supervised.alive.all_variables.stats.csv",
@@ -401,24 +474,13 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     sc.tl.leiden(a)
 
     feats = annott.columns.tolist() + ["leiden", "alive"]
-    fig, ax = plt.subplots(
-        len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True
-    )
+    fig, ax = plt.subplots(len(feats), 1, figsize=(4, len(feats) * 4), sharex=True, sharey=True)
     group_cmap = tab40(range(a.obs["group"].nunique()))[:, :3]
     size_cmap = sns.color_palette("inferno", a.obs["lipid_size"].nunique())
     density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
-    cmaps = (
-        [group_cmap.tolist(), "Paired"]
-        + [density_cmap, size_cmap]
-        + ["tab10"]
-        + ["coolwarm"]
-    )
+    cmaps = [group_cmap.tolist(), "Paired"] + [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(fig.axes, feats, cmaps):
-        p = (
-            dict(cmap=cmap)
-            if a.obs[feat].dtype.name.startswith("float")
-            else dict(palette=cmap)
-        )
+        p = dict(cmap=cmap) if a.obs[feat].dtype.name.startswith("float") else dict(palette=cmap)
         sc.pl.umap(a, color=feat, **p, edges=True, ax=ax, show=False, s=50, alpha=0.5)
     for ax in fig.axes:
         ax.set(xlabel="", ylabel="")
@@ -438,9 +500,7 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     ax = grid.ax_heatmap
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=5)
     ax.set_yticklabels(ax.get_yticklabels(), fontsize=5)
-    grid.savefig(
-        output_dir / "feature_annotation.network.scanpy.clustermap.ukbb.svg", **figkws
-    )
+    grid.savefig(output_dir / "feature_annotation.network.scanpy.clustermap.ukbb.svg", **figkws)
 
     corr = z_score(xx).corr()
     grid = clustermap(
@@ -467,9 +527,7 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     p["metagroup"] = pd.Categorical(
         p["metagroup"]
     )  # , categories=p['metagroup'].value_counts().index)
-    p["group"] = pd.Categorical(
-        p["group"]
-    )  # , categories=p['group'].value_counts().index)
+    p["group"] = pd.Categorical(p["group"])  # , categories=p['group'].value_counts().index)
     p = p.iloc[grid.dendrogram_row.reordered_ind]
     fig, axes = plt.subplots(1, p.shape[1], figsize=(5, 10))
     for ax, at, cmap in zip(axes, p.columns, cmaps):
@@ -483,8 +541,7 @@ def get_feature_network(x: DataFrame) -> DataFrame:
         )
         fig.axes[-1].set_yticklabels(p[at].cat.categories)
     fig.savefig(
-        output_dir
-        / "feature_annotation.network.scanpy.clustermap.symmetric.ukbb.annotations.svg",
+        output_dir / "feature_annotation.network.scanpy.clustermap.symmetric.ukbb.annotations.svg",
         **figkws,
     )
 
@@ -506,11 +563,7 @@ def get_feature_network(x: DataFrame) -> DataFrame:
     density_cmap = sns.color_palette("inferno", a.obs["lipid_density"].nunique())
     cmaps = [density_cmap, size_cmap] + ["tab10"] + ["coolwarm"]
     for ax, feat, cmap in zip(axes, feats, cmaps):
-        p = (
-            dict(cmap=cmap)
-            if a.obs[feat].dtype.name.startswith("float")
-            else dict(palette=cmap)
-        )
+        p = dict(cmap=cmap) if a.obs[feat].dtype.name.startswith("float") else dict(palette=cmap)
         for j, embedding in enumerate(embeddings):
             sc.pl.embedding(
                 a,
@@ -566,25 +619,13 @@ def get_signatures() -> DataFrame:
 
     df = pd.read_excel(url, index_col=0)
     annot = get_nmr_feature_annotations()
-    df = (
-        annot.reset_index()
-        .set_index("abbreviation")
-        .join(df)
-        .reset_index()
-        .set_index("feature")
-    )
+    df = annot.reset_index().set_index("abbreviation").join(df).reset_index().set_index("feature")
 
     sigs = pd.DataFrame(index=df.index)
     sigs["future_severe_pneumonia"] = df["Beta"]
 
     df = pd.read_csv(metadata_dir / "infectious_disease_score.csv", index_col=0)
-    df = (
-        annot.reset_index()
-        .set_index("abbreviation")
-        .join(df)
-        .reset_index()
-        .set_index("feature")
-    )
+    df = annot.reset_index().set_index("abbreviation").join(df).reset_index().set_index("feature")
     sigs["future_infectious_disease"] = df["infectious_disease_score_weight"]
 
     return sigs.sort_index()
