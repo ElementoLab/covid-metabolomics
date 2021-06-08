@@ -26,11 +26,11 @@ Y_FILE = data_dir / "metadata.csv"
 
 
 attributes = [
-    "race",
     "age",
     "sex",
     "obesity",
     "bmi",
+    "race",
     "hospitalized",
     "intubated",
     "patient_group",
@@ -42,9 +42,9 @@ attributes = [
 ]
 
 palettes = dict(
-    race=sns.color_palette("tab10"),
     sex=sns.color_palette("Pastel1")[3:5],
-    obesity=sns.color_palette("tab10")[3:5],
+    obesity=sns.color_palette("tab10")[3:6],
+    race=sns.color_palette("tab10"),
     hospitalized=sns.color_palette("Set2")[:2],
     intubated=sns.color_palette("Set2")[:2],
     patient_group=np.asarray(sns.color_palette("Set1"))[[2, 1, 7, 3, 0]].tolist(),

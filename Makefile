@@ -18,6 +18,9 @@ convert:  ## Convert R data to CSV/parquet
 analysis:  ## Run Python analysis
 	python -u src/analysis.py
 
-all: convert analysis  ## Run all steps
+figures:  ## Produce figures in various formats
+	cd figures; ./process.sh
 
-.PHONY: all
+all: convert analysis figures ## Run all steps
+
+.PHONY: figures all

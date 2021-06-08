@@ -86,6 +86,113 @@ def main(cli: tp.Sequence[str] = None) -> int:
     return 0
 
 
+def get_change_per_patient(x: DataFrame, y: DataFrame) -> None:
+    output_dir = (results_dir / "supervised").mkdir()
+    stats_f = output_dir / "supervised.joint_model.model_fits.csv"
+    sig = (
+        pd.read_csv(stats_f, index_col=0)
+        .query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+    )
+
+    # xz = x.groupby(y['patient_code']).apply(z_score).dropna()
+    # yz = y.reindex(xz.index)
+
+    xz = z_score(x)
+    score = xz @ sig
+    # score = (score - score.min()) / (score.max() - score.min())
+
+    score.groupby(y["WHO_score_sample"]).mean()
+    score.groupby(y["patient_code"]).mean()
+
+    var = get_nmr_feature_annotations()
+
+    try:
+        exp = pd.read_csv(metadata_dir / "ukbb.feature_range.csv", index_col=0)
+    except FileNotFoundError:
+        exp = pd.DataFrame(index=x.columns, columns=["mean", "ci_lower", "ci_upper"])
+
+    for pat in y["patient_code"].unique():
+        pdf = y.loc[y["patient_code"] == pat].sort_values("date_sample")
+        if pdf.shape[0] <= 1:
+            continue
+
+        score.loc[pdf.index]
+        pdf["days_since_symptoms"]
+        t1 = pdf.iloc[0, :]
+        t2 = pdf.iloc[1, :]
+        diff = score.loc[t2.name] - score.loc[t1.name]
+        days = t2["days_since_symptoms"] - t1["days_since_symptoms"]
+        print(
+            f"Patient {pat}; "
+            f"timepoints: {pdf.shape[0]}; "
+            f"first t: {t1['days_since_symptoms']}; "
+            f"time: {days}; "
+            f"diff: {diff:.3f}; "
+            f"alive: {t1['alive']}"
+        )
+        if pd.isnull(days):
+            continue
+
+        # for feat in ['GlycA', 'score']:
+        feat = "GlycA"
+        px = pdf["days_since_symptoms"].astype(float)
+
+        fig, axes = plt.subplots(1, 2, figsize=(4, 2))
+        axes[0].scatter(px, x[feat].loc[pdf.index])
+        sns.barplot(px, x[feat].loc[pdf.index], ax=axes[1])
+        unit = var.loc[feat, "unit"]
+        for ax in axes:
+            ax.set(ylabel=f"{feat} ({unit})")
+
+            base = exp.reindex([feat]).squeeze()
+            if base.isnull().all():
+                continue
+
+            ax.axhline(base["mean"], linestyle="--", color="grey", linewidth=0.5)
+            n = len(px)
+            for i in range(1, 4):
+                py1 = base["mean"] - base["std"] * i
+                py2 = base["mean"] + base["std"] * i
+                ax.fill_between(
+                    px,
+                    [py1] * n,
+                    [py2] * n,
+                    color="grey",
+                    alpha=0.1,
+                    zorder=-100 - i,
+                    edgecolor=None,
+                )
+        fig.savefig(output_dir / f"patient_{pat}.timeline_{feat}.svg", **figkws)
+        plt.close(fig)
+
+        fig, axes = plt.subplots(1, 2, figsize=(4, 2))
+        axes[0].scatter(px, score.loc[pdf.index])
+        # color = plt.get_cmap("RdBu_r")(score.loc[pdf.index])[:, :-1]
+        sns.barplot(px, score.loc[pdf.index], ax=axes[1])
+        for ax in axes:
+            ax.set(ylabel=f"COVID severity score")
+
+            base = {"mean": score.mean(), "std": score.std()}
+            ax.axhline(base["mean"], linestyle="--", color="grey", linewidth=0.5)
+            n = len(px)
+            for i in range(1, 4):
+                py1 = base["mean"] - base["std"] * i
+                py2 = base["mean"] + base["std"] * i
+                ax.fill_between(
+                    px,
+                    [py1] * n,
+                    [py2] * n,
+                    color="grey",
+                    alpha=0.1,
+                    zorder=-100 - i,
+                    edgecolor=None,
+                )
+        fig.savefig(output_dir / f"patient_{pat}.timeline_score.svg", **figkws)
+        plt.close(fig)
+
+
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--overwrite", action="store_true")
@@ -331,10 +438,22 @@ def plot_global_stats(x: DataFrame) -> None:
 def compare_clinical_and_panel():
 
     x, y = get_x_y_nmr()
+    var = get_nmr_feature_annotations()
+    unit = var.loc["Creatinine", "unit"]
 
-    fig, ax = plt.subplots()
-    ax.scatter(y["creatinine"], x["Creatinine"])
-    ax.set(title="Creatinine", xlabel="Clinical labs", ylabel="NMR panel")
+    v = (y["creatinine"] * 100).append(x["Creatinine"]).max()
+    fig, axes = plt.subplots(1, 2, figsize=(8.2, 4))
+    for ax in axes:
+        ax.plot((0, v), (0, v), linestyle="--", color="grey")
+        ax.scatter(y["creatinine"] * 100, x["Creatinine"], alpha=0.5)
+        s = pg.corr((y["creatinine"] * 100), x["Creatinine"]).squeeze()
+        ax.set(
+            title=f"Creatinine\nr = {s['r']:.3f}; p = {s['p-val']:.3e}; ",
+            xlabel="Clinical labs",
+            ylabel=f"NMR panel ({unit})",
+        )
+    axes[-1].loglog()
+    fig.savefig(results_dir / "NMR_vs_clinical.creatinine.svg", **figkws)
 
 
 def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
@@ -363,10 +482,31 @@ def plot_all_signatures():
     from src.ukbb import get_signatures as ukbbsigs
     from src.dierckx import get_signatures as dierckxsigs
 
+    stats_f = results_dir / "supervised" / "supervised.joint_model.model_fits.csv"
+    sig = (
+        pd.read_csv(stats_f, index_col=0)
+        .query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+        .rename("severity")
+    )
+    dim_f = (
+        results_dir
+        / "unsupervised_NMR"
+        / "unsupervised.variable_contribution_SpectralEmbedding.correlation.variable_ordering.csv"
+    )
+    dim = pd.read_csv(dim_f, index_col=0)
+
     ukbb_sigs = ukbbsigs().sort_index()
     dierckx_sigs = dierckxsigs().sort_index()
 
-    p = ukbb_sigs.join(dierckx_sigs).drop("future_infectious_disease", 1).dropna()
+    p = (
+        ukbb_sigs.join(sig)
+        .join(dim)
+        .join(dierckx_sigs)
+        .drop("future_infectious_disease", 1)
+        .dropna()
+    )
 
     grid = clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
 
@@ -1405,8 +1545,9 @@ def supervised_joint(
     except FileNotFoundError:
         exp = pd.DataFrame(index=x.columns, columns=["mean", "ci_lower", "ci_upper"])
 
+    alpha = 0.05
     y[attribute] = y[attribute].astype(pd.CategoricalDtype(ordered=True))
-    feats = res_mlm.sort_values("pvalues").head(20).index
+    feats = res_mlm.query(f"qvalues < {alpha}").sort_values("pvalues").index
     var = get_nmr_feature_annotations()
     if y[attribute].dtype.name in ["object", "category"]:
         fig = swarmboxenplot(
@@ -1856,13 +1997,15 @@ def integrate_nmr_flow() -> None:
             "dataset",
             "group",
             "hospitalized",
+            "intubated",
+            "alive",
             "WHO_score_sample",
             "patient_code",
         ],
         plot=True,
         algo_kwargs=dict(umap=dict(gamma=25)),
         plt_kwargs=dict(s=100),
-        cmaps=["Set1", "Set2", "Dark2", "inferno", None],
+        cmaps=["Set1", "Set2", "Dark2", "Dark2", "Dark2", "inferno", None],
     )
     pd.DataFrame(metrics)
 
@@ -1874,7 +2017,24 @@ def integrate_nmr_flow() -> None:
         ]
     )
     y_comb = pd.concat([y.assign(dataset="NMR"), y.assign(dataset="flow_cytometry")])
+    y_comb["dataset"] = y_comb["dataset"].astype(pd.CategoricalDtype())
     y_comb.index = x_comb.index
+
+    grid = clustermap(x_comb.T.corr(), cmap="RdBu_r", center=0, rasterized=True)
+    grid.fig.savefig(output_dir / "rCCA_integration.sample_correlation.clustermap.svg", **figkws)
+    from seaborn_extensions.annotated_clustermap import plot_attribute_heatmap
+
+    q = palettes.copy()
+    q["dataset"] = sns.color_palette("tab10", 2)
+    fig = plot_attribute_heatmap(
+        y=y_comb.iloc[grid.dendrogram_row.reordered_ind],
+        attributes=attributes + ["dataset"],
+        palettes=q,
+        cmaps=cmaps,
+    )
+    fig.savefig(
+        output_dir / "rCCA_integration.sample_correlation.clustermap.attributes.svg", **figkws
+    )
 
     fig = plot_projection(x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5)
     fig.savefig(
@@ -2027,6 +2187,7 @@ def assess_integration(
                 adata,
                 basis=algo,
                 color=attr,
+                components="1,3" if algo == "cca" else "1,2",
                 alpha=0.5,
                 show=False,
                 **plt_kwargs,
@@ -2043,6 +2204,16 @@ def assess_integration(
     fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.svg", **figkws)
     plt.close(fig)
 
+    fig, axes = plt.subplots(1, len(attributes), figsize=(3 * len(attributes), 1))
+    for j, (ax, attr) in enumerate(zip(axes, attributes)):
+        cmap = sns.color_palette(cmaps[j], len(adata.obs[attr].cat.categories) + 1)
+        for i, s in enumerate(adata.obs[attr].cat.categories):
+            p = adata.obs.query(f"{attr} == '{s}'")
+            p = adata[p.index].obsm["X_cca"][:, 0]
+            sns.kdeplot(p, color=cmap[i], ax=ax, cumulative=True)
+            ax.text(p.mean(), 0.5, s=s, color=cmap[i])
+    fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.kde_distribution.svg", **figkws)
+    plt.close(fig)
     return scores
 
 

@@ -97,100 +97,133 @@ def unsupervised(
             plt.close(fig)
 
 
-def get_explanatory_variables(x, y, data_type: str, suffix: str = "") -> None:
+def get_explanatory_variables(
+    x, y, data_type: str, suffix: str = "", attributes: tp.Sequence[str] = []
+) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.
     """
     from sklearn.manifold import SpectralEmbedding
+    import scipy
+    from imc.utils import minmax_scale
 
     output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
+    output_prefix = output_dir / "unsupervised.variable_contribution_SpectralEmbedding."
+
+    xz = z_score(x)
 
     res = pd.DataFrame(
-        SpectralEmbedding().fit_transform(z_score(x)),
+        SpectralEmbedding().fit_transform(xz),
         index=x.index,
         columns=["SE1", "SE2"],
     )
-    corr_mat = res.join(z_score(x)).corr().loc[x.columns, res.columns]
-    corr_mat.to_csv(
-        output_dir / "unsupervised.variable_contibution_SpectralEmbedding.correlation.csv"
+    # res.to_csv(output_prefix + "sample_positions.csv")
+    # Get order of variables along axes
+    feat_res = (
+        res[["SE1"]]
+        .join((xz.loc[res["SE2"] < 0]))
+        .corr()
+        .loc[x.columns, "SE1"]
+        .rename_axis(index="feature")
+        .to_frame()
+    )
+    feat_res = feat_res.join(
+        res[["SE2"]]
+        .join((xz.loc[res["SE1"] > 0]))
+        .corr()
+        .loc[x.columns, "SE2"]
+        .rename_axis(index="feature")
     )
 
-    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
-    # # plot samples
-    ax.scatter(*res.T.values)
-    # # plot variables as vectors
-    for i in corr_mat.index:
-        ax.plot((0, corr_mat.loc[i, "SE1"] / 10), (0, corr_mat.loc[i, "SE2"] / 10))
-    fig.savefig(
-        output_dir
-        / "unsupervised.variable_contibution_SpectralEmbedding.correlation.scatter_vectors.svg",
-        **figkws,
-    )
+    lat = minmax_scale(feat_res)
+    feat_res["joint"] = minmax_scale(lat["SE1"]) * (lat["SE2"])
+    feat_res.to_csv(output_prefix + "correlation.variable_ordering.csv")
 
-    xz = res.join(z_score(x))
-    _coefs = list()
-    for var in x.columns:
-        res1 = smf.ols(f"SE1 ~ {var}", data=xz).fit()
-        res2 = smf.ols(f"SE2 ~ {var}", data=xz).fit()
-        _coefs.append(
-            res1.summary2()
-            .tables[1]
-            .assign(var="SE1")
-            .append(res2.summary2().tables[1].assign(var="SE2"))
-        )
-    coefs = pd.concat(_coefs).drop("Intercept").rename_axis(index="variable")
-    coefs2 = coefs.pivot_table(index="variable", columns="var", values="Coef.")
-    coefs2.to_csv(
-        output_dir / "unsupervised.variable_contibution_SpectralEmbedding.regression.csv"
-    )
+    # Get order of samples based on variable order
+    res["joint"] = xz.T.join(feat_res["joint"]).corr()["joint"].drop("joint")
+    res.to_csv(output_prefix + "correlation.sample_ordering.csv")
 
-    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
-    # # plot samples
-    ax.scatter(*res.T.values)
-    # # plot variables as vectors
-    cmap = plt.get_cmap("inferno")
-    vmin = coefs2.abs().sum(1).min()
-    vmax = coefs2.abs().sum(1).max()
-    for i in coefs2.index:
-        c = coefs2.loc[i].abs().sum()
-        ax.plot(
-            (0, coefs2.loc[i, "SE1"] * 2),
-            (0, coefs2.loc[i, "SE2"] * 2),
-            c=cmap((c - vmin) / (vmax - vmin)),
-        )
-        if c > 0.027:
-            ax.text(coefs2.loc[i, "SE1"] * 2, coefs2.loc[i, "SE2"] * 2, s=i)
-    fig.savefig(
-        output_dir
-        / "unsupervised.variable_contibution_SpectralEmbedding.regression.scatter_vectors.svg",
-        **figkws,
-    )
+    for text, label in [(False, "."), (True, ".with_text.")]:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        # # plot sample scatter
+        ax.scatter(res["SE1"], res["SE2"], c=res["joint"], cmap="RdBu_r")
+        # # plot variables as vectors
+        cmap = plt.get_cmap("inferno")
+        vmin, vmax = feat_res["joint"].apply([min, max])
+        for i in feat_res.index:
+            c = feat_res.loc[i, "joint"]
+            draw = c > 0.055
+            ax.plot(
+                (0, feat_res.loc[i, "SE1"] / 10),
+                (0, feat_res.loc[i, "SE2"] / 10),
+                c=cmap((c - vmin) / (vmax - vmin)),
+                linewidth=0.5,
+                alpha=0.5 if draw else 0.25,
+            )
+            if text and draw:
+                ha = "left" if feat_res.loc[i, "SE1"] > 0 else "right"
+                va = "bottom" if feat_res.loc[i, "SE2"] > 0 else "top"
+                ax.text(feat_res.loc[i, "SE1"] / 10, feat_res.loc[i, "SE2"] / 10, s=i, ha=ha, va=va)
+                ax.scatter(
+                    feat_res.loc[i, "SE1"] / 10, feat_res.loc[i, "SE2"] / 10, s=1, color="green"
+                )
+        fig.savefig(output_prefix + f"correlation.scatter_vectors{label}svg", **figkws)
 
-    sample_order = res.sort_values("SE1").index
-    var_order = coefs2.sort_values("SE1").index
+    # Heatmap ordered
+    sample_order = res.sort_values("joint").index
+    var_order = feat_res.sort_values("joint").index
     lx = z_score(x).loc[sample_order, var_order]
     # # apply some smoothing
     lxs = pd.DataFrame(
-        scipy.ndimage.gaussian_filter(lx, 3, mode="mirror"),
+        scipy.ndimage.gaussian_filter(lx, 1, mode="mirror"),
         lx.index,
         lx.columns,
     )
-    grid = clustermap(
-        lxs,
-        col_cluster=False,
-        row_cluster=False,
-        center=0,
-        cmap="RdBu_r",
-        robust=True,
-        row_colors=y[attributes].join(res["SE1"]),
-        figsize=(16, 6),
-        rasterized=True,
-    )
-    grid.savefig(
-        output_dir
-        / "unsupervised.variable_contibution_SpectralEmbedding.regression.ordered.clustermap.svg",
-        **figkws,
-    )
+    for df, label in [(lx, ""), (lxs, ".smoothed")]:
+        grid = clustermap(
+            df,
+            col_cluster=False,
+            row_cluster=False,
+            center=0,
+            cmap="RdBu_r",
+            robust=True,
+            row_colors=y[attributes].join(res),
+            col_colors=feat_res,
+            figsize=(16, 6),
+            rasterized=True,
+        )
+        grid.savefig(
+            output_prefix + f"ordered.clustermap{label}.svg",
+            **figkws,
+        )
+        if "palettes" in locals():
+            fig = plot_attribute_heatmap(
+                y.reindex(sample_order), attributes, palettes, cmaps, figsize=(16, 6)
+            )
+            fig.savefig(
+                output_prefix + f"ordered.clustermap{label}.colors.svg",
+                **figkws,
+            )
+
+    # Plot variable values along space
+    l = np.round(np.arange(-1, 1, 0.1), 1)
+    p = pd.DataFrame(index=l, columns=var_order)
+    for col in var_order:
+        xn = res.loc[sample_order, "joint"]
+        f = scipy.interpolate.interp1d(xn, xz.loc[sample_order, col], fill_value="extrapolate")
+        p[col] = f(l)
+
+    fig, ax = plt.subplots(figsize=(18, 2))
+    sns.heatmap(p.loc[p.index >= -0.8].iloc[:, 1:], center=0, cmap="RdBu_r", ax=ax, robust=True)
+    ax.set(ylabel="Pseudotime")
+    fig.savefig(output_prefix + "ordered.interpolated.heatmap.svg", **figkws)
+
+    # Compare with simple aggregation of severity score
+    p = z_score(xz.groupby(y["WHO_score_sample"]).mean())
+    fig, ax = plt.subplots(figsize=(18, 2))
+    sns.heatmap(p[var_order].iloc[:, 1:], center=0, cmap="RdBu_r", ax=ax, robust=True)
+    ax.set(ylabel="WHO_score_sample")
+    fig.savefig(output_dir / "mean_per_WHO_score_sample.ordered.heatmap.svg", **figkws)
 
 
 def overlay_individuals_over_global(
@@ -272,8 +305,7 @@ def overlay_individuals_over_global(
                         n_timepoints=y2.shape[0],
                         total_distance=_dists.sum(),
                         dislocation=dists.loc[first, last],
-                        timedelta=y2.loc[last, "date_sample"]
-                        - y2.loc[first, "date_sample"],
+                        timedelta=y2.loc[last, "date_sample"] - y2.loc[first, "date_sample"],
                     ),
                     name=patient,
                 )
@@ -330,7 +362,8 @@ def overlay_individuals_over_global(
                     arrowprops=dict(arrowstyle="->", color=color),
                 )
         fig.savefig(
-            output_dir / f"unsupervised.{name}.patient_walk_in_space.scatter_arrow.svg",
+            output_dir
+            / f"unsupervised.{name}.patient_walk_in_space.scatter_arrow.P23_P24_detail.zoom.svg",
             **figkws,
         )
         plt.close(fig)
@@ -386,22 +419,16 @@ def overlay_individuals_over_global(
 
     # Consensus
     joint_metrics = pd.concat(_joint_metrics)
-    joint_metrics.to_csv(
-        output_dir / "unsupervised.all_methods.patient_walk_in_space.metrics.csv"
-    )
+    joint_metrics.to_csv(output_dir / "unsupervised.all_methods.patient_walk_in_space.metrics.csv")
 
     joint_metrics = pd.read_csv(
         output_dir / "unsupervised.all_methods.patient_walk_in_space.metrics.csv",
         index_col=0,
     )
     joint_metricsz = (
-        joint_metrics.groupby("method")[
-            ["total_distance", "dislocation", "velo", "velo_dir"]
-        ]
+        joint_metrics.groupby("method")[["total_distance", "dislocation", "velo", "velo_dir"]]
         .apply(z_score)
-        .join(
-            joint_metrics.groupby(level=0)[["n_timepoints", "time_days"]].apply(np.mean)
-        )
+        .join(joint_metrics.groupby(level=0)[["n_timepoints", "time_days"]].apply(np.mean))
         .groupby(level=0)
         .mean()
     )
@@ -453,9 +480,7 @@ def overlay_individuals_over_global(
     _stats = list()
     for attribute in [a for a in attributes if a in palettes]:
         df = (
-            joint_metricsz.join(y.set_index("patient_code")[[attribute]])
-            .dropna()
-            .drop_duplicates()
+            joint_metricsz.join(y.set_index("patient_code")[[attribute]]).dropna().drop_duplicates()
         )
 
         fig, _ = swarmboxenplot(data=df, x=attribute, y="velo")
@@ -465,17 +490,13 @@ def overlay_individuals_over_global(
             **figkws,
         )
 
-        if not pg.homoscedasticity(data=df, dv="velo", group=attribute)[
-            "equal_var"
-        ].squeeze():
+        if not pg.homoscedasticity(data=df, dv="velo", group=attribute)["equal_var"].squeeze():
             continue
         if pg.anova(data=df, dv="velo", between=attribute)["p-unc"].squeeze() >= 0.05:
             # continue
             pass
         _stats.append(
-            pg.pairwise_tukey(data=df, dv="velo", between=attribute).assign(
-                attribute=attribute
-            )
+            pg.pairwise_tukey(data=df, dv="velo", between=attribute).assign(attribute=attribute)
         )
 
     stats = pd.concat(_stats)
