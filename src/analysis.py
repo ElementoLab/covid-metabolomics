@@ -436,11 +436,85 @@ def plot_global_stats(x: DataFrame) -> None:
 
 @close_plots
 def compare_clinical_and_panel():
+    labs = [
+        "total_bilirubin",
+        "ALT",
+        "AST",
+        "creatinine",
+        "CRP",
+        "hemoglobin",
+        "hematocrit",
+        "LDH",
+        "RDWCV",
+        "MCV",
+    ]
+    ## ranges are collapsed to min-max across sex
+    healthy_ranges = {
+        "total_bilirubin": (1.0, 1.4),
+        "AST": (10, 40),
+        "ALT": (7, 56),
+        "creatinine": (0.6, 1.3),
+        "CRP": (0, 10),
+        "hemoglobin": (12, 17.5),
+        "hematocrit": (36, 51),
+        "LDH": (140, 280),
+        "RDWCV": (11.8, 16.1),
+        "MCV": (80, 96),
+    }
 
-    x, y = get_x_y_nmr()
     var = get_nmr_feature_annotations()
-    unit = var.loc["Creatinine", "unit"]
+    x, y = get_x_y_nmr()
 
+    y["ALT-AST_log_ratio"] = np.log(y["ALT"] / y["AST"])
+    labs += ["ALT-AST_log_ratio"]
+
+    z = x.join(y[labs + ["WHO_score_sample"]])
+    fig, stats = swarmboxenplot(
+        data=z, x="WHO_score_sample", y=labs, plot_kws=dict(palette="inferno")
+    )
+    for ax, lab in zip(fig.axes, labs):
+        if lab in healthy_ranges:
+            r = healthy_ranges[lab]
+            ax.fill_between(
+                y["WHO_score_sample"].cat.categories.tolist(), *r, alpha=0.25, color="grey"
+            )
+    # # add healthy range
+    n = fig.axes[0].get_gridspec().ncols
+    for ax in fig.axes[-n:]:
+        ax.set_xlabel("WHO_score_sample")
+    fig.savefig(results_dir / "clinical_parameters.blood_liver.change_with_severity.svg", **figkws)
+
+    # #
+    labs += ["WHO_score_sample"]
+    con = (
+        x.join(y[labs])
+        .dropna()
+        .astype(float)
+        .corr()
+        .rename_axis(index="Metabolites")
+        .rename_axis(columns="Clinical parameters")
+    )
+    grid = clustermap(
+        con.loc[x.columns, labs],
+        cbar_kws=dict(label="Pearson correlation"),
+        cmap="RdBu_r",
+        center=0,
+        dendrogram_ratio=0.1,
+        row_colors=var[["metagroup", "group"]],
+        figsize=(5, 10),
+    )
+    grid.ax_heatmap.set_ylabel("Metabolites" + grid.ax_heatmap.get_ylabel())
+    grid.fig.savefig(
+        results_dir / "clinical_parameters.blood_liver.correlation_with_metabolism.svg", **figkws
+    )
+
+    # (con.loc[x.columns, 'ALT'] - con.loc[x.columns, 'WHO_score_sample'] * -1).abs().sort_values()
+    # fig, stats = swarmboxenplot(data=x.join(y), x='WHO_score_sample', y='XL_HDL_P')
+    # fig, ax = plt.subplots()
+    # ax.scatter(data=x.join(y), x='ALT', y='XL_HDL_P')
+
+    # Creatinine comparison
+    unit = var.loc["Creatinine", "unit"]
     v = (y["creatinine"] * 100).append(x["Creatinine"]).max()
     fig, axes = plt.subplots(1, 2, figsize=(8.2, 4))
     for ax in axes:
@@ -454,6 +528,40 @@ def compare_clinical_and_panel():
         )
     axes[-1].loglog()
     fig.savefig(results_dir / "NMR_vs_clinical.creatinine.svg", **figkws)
+
+    import statsmodels.formula.api as smf
+
+    data = z_score(z.dropna().astype(float))
+
+    # # GLM
+    labs.pop(labs.index("WHO_score_sample"))
+    labs.pop(labs.index("ALT-AST_log_ratio"))
+
+    _res_glm = list()
+    for feat in tqdm(x.columns, desc="feature", position=1):
+        mdf = smf.glm(f"{feat} ~ {' + '.join(labs)}", data).fit()
+        res = mdf.params.to_frame("coefs").join(mdf.pvalues.rename("pvalues")).assign(feature=feat)
+        _res_glm.append(res)
+    res_glm = pd.concat(_res_glm).drop("Intercept")
+    res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+    coefs = res_glm.reset_index().pivot_table(index="feature", columns="index", values="coefs")
+    qvals = res_glm.reset_index().pivot_table(index="feature", columns="index", values="qvalues")
+    log_qvals = -np.log10(qvals)
+
+    grid = clustermap(
+        log_qvals,
+        cbar_kws=dict(label="-log10(p-value)"),
+        cmap="RdBu_r",
+        robust=True,
+        center=0,
+        dendrogram_ratio=0.1,
+        row_colors=var[["metagroup", "group"]],
+        figsize=(5, 10),
+    )
+    grid.fig.savefig(
+        results_dir / "clinical_parameters.blood_liver.regression_with_metabolism.svg", **figkws
+    )
 
 
 def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
