@@ -7,7 +7,7 @@ import seaborn as sns
 import pingouin as pg
 import statsmodels.formula.api as smf
 
-from imc.types import DataFrame, Figure
+from imc.types import DataFrame, Array, Figure
 from imc.utils import z_score
 from seaborn_extensions import clustermap, swarmboxenplot
 
@@ -513,6 +513,7 @@ def plot_projection(
     n_dims: int = 4,
     algo_name: str = "PCA",
     fit_lowess: bool = False,
+    palettes: tp.Mapping[str, Array] = None,
 ) -> Figure:
     from seaborn_extensions.annotated_clustermap import to_color_series
     from seaborn_extensions.annotated_clustermap import is_numeric

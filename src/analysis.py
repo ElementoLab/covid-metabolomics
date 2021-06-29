@@ -21,7 +21,7 @@ from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot
 from seaborn_extensions.annotated_clustermap import is_numeric
 
 from src.config import *
-from src.models import DataSet
+from src.models import DataSet, AnnData
 from src.ops import (
     unsupervised,
     get_explanatory_variables,
@@ -53,6 +53,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
 
     supervised(x1, y1, attributes)
     supervised_joint(x1, y1, attributes)
+    supervised_temporal(x1, y1, attributes)
     feature_enrichment()
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
 
@@ -309,6 +310,38 @@ def get_x_y_nmr() -> tp.Tuple[DataFrame, DataFrame]:
             y.columns[y.columns.tolist().index("date_sample") :].tolist()
             + y.columns[: y.columns.tolist().index("date_sample")].tolist()
         )
+    )
+
+    # ids = pd.read_csv(metadata_dir / 'accession_ip_mapping.csv', index_col=0, squeeze=True).rename("accession2")
+
+    # Intubation
+    intubation = pd.read_csv(metadata_dir / "intubation_dates.csv", index_col=0)[
+        "date intubation"
+    ].rename("date_intubation")
+    d = (
+        intubation.apply(
+            lambda x: (pd.NaT, pd.NaT) if pd.isnull(x) else tuple(map(pd.to_datetime, x.split("-")))
+        )
+        .apply(pd.Series)
+        .rename(columns={0: "date_intubation_start", 1: "date_intubation_end"})
+    )
+    y = y.join(d)
+    y["sample_under_intubation"] = (y["date_sample"] > y["date_intubation_start"]) & (
+        y["date_sample"] < y["date_intubation_end"]
+    )
+    y["days_since_intubation_start"] = (y["date_sample"] - y["date_intubation_start"]).apply(
+        lambda x: x.days
+    )
+
+    # Tosilizumab treatment
+    tosi = (
+        pd.read_csv(metadata_dir / "tosilizumab_dates.csv", index_col=0)["date tosi"]
+        .rename("date_tosilizumab_start")
+        .apply(pd.to_datetime)
+    )
+    y = y.join(tosi)
+    y["days_since_tosilizumab_start"] = (y["date_sample"] - y["date_tosilizumab_start"]).apply(
+        lambda x: x.days
     )
 
     return x, y
@@ -1772,7 +1805,204 @@ def supervised_joint(
     )
 
 
-def score_signature(x: DataFrame, diff: Series):
+def supervised_temporal(
+    x: DataFrame,
+    y: DataFrame,
+    attributes: tp.Sequence[str],
+    plot_all: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """A single model of disease severity adjusted for various confounders."""
+    import statsmodels.formula.api as smf
+
+    output_dir = (results_dir / "supervised").mkdir()
+
+    test_vars = ["days_since_intubation_start", "days_since_tosilizumab_start"]
+
+    # Use also a MLM and compare to GLM
+    stats_f = output_dir / "supervised.temporal.model_fits.csv"
+    attrs = ["age", "race", "bmi", "WHO_score_sample"]
+
+    if not stats_f.exists() or overwrite:
+        model_str = "{} ~ " + " + ".join(attrs + test_vars)
+
+        data = z_score(x).join(y[attrs + test_vars]).dropna(subset=attrs + test_vars)
+
+        # # convert ordinal categories to numeric
+        for col in data.columns:
+            if data[col].dtype.name == "category":
+                data[col] = data[col].cat.codes.astype(float).replace(-1, np.nan)
+            if data[col].dtype.name == "Int64":
+                data[col] = data[col].astype(float)
+
+        assert data["WHO_score_sample"].dtype.name != "category"
+
+        # # GLM
+        _res_glm = list()
+        for feat in tqdm(x.columns, desc="feature", position=1):
+            mdf = smf.glm(model_str.format(feat), data).fit()
+            res = (
+                mdf.params.to_frame("coefs")
+                .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+                .join(mdf.pvalues.rename("pvalues"))
+                .assign(feature=feat)
+            )
+            _res_glm.append(res)
+        res_glm = pd.concat(_res_glm)
+        res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+        res = res_glm.assign(model="glm")
+        res = res.rename_axis(index="contrast")
+        res.to_csv(stats_f)
+
+    # Plot
+    attribute = "days_since_tosilizumab_start"
+    res = pd.read_csv(stats_f, index_col=0).loc[attribute]
+    assert np.allclose((res["ci_l"] - res["coefs"]).abs(), (res["ci_u"] - res["coefs"]).abs())
+    res["ci"] = res["coefs"] - res["ci_l"]
+
+    output_prefix = output_dir / f"supervised.temporal.{attribute}."
+    res_glm = res.query("model == 'glm'").set_index("feature")
+
+    # Plot all variables as rank vs change plot
+    # # check error is symmetric
+    var = get_nmr_feature_annotations()
+    cat = var["group"].astype(pd.CategoricalDtype())
+    cmap = sns.color_palette("tab20")
+    score = (-np.log10(res_glm["qvalues"])) * (res_glm["coefs"] > 0).astype(int).replace(0, -1)
+    ci = res_glm["ci"].rename("GLM")
+    cglm = res_glm["coefs"].rename("GLM")
+    pglm = res_glm["pvalues"]
+    qglm = res_glm["qvalues"]
+    n_top = 10
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(6, 3 * 2))
+    for ax in fig.axes:
+        ax.axhline(0, linestyle="--", color="grey")
+    feats = (
+        score.sort_values().head(n_top).index.tolist()
+        + score.sort_values().tail(n_top).index.tolist()
+    )
+    for ax, crit, text in zip(fig.axes, [ci.index, feats], [False, True]):
+        rank = score.loc[crit].rank()
+        for i, group in enumerate(cat.unique()):
+            sel = (cat == group) & cat.index.to_series().rename("group").isin(rank.index)
+            # ax.errorbar(
+            #     rank.loc[sel],
+            #     score.loc[sel],
+            #     fmt="o",
+            #     yerr=ci.loc[sel],
+            #     color=cmap[i],
+            #     alpha=0.2,
+            # )
+            f = sel[sel].index
+            ax.scatter(
+                rank.loc[f],
+                score.loc[f],
+                color=cmap[i],
+                s=10 + 2.5 ** -np.log10(qglm.loc[f]),
+                alpha=0.5,
+                label=group,
+            )
+            if text:
+                for idx in rank.loc[f].index:
+                    ax.text(rank.loc[idx], score.loc[idx], s=idx, rotation=90, ha="center")
+        v = (score.abs() + res_glm["ci"]).max()
+        v += v * 0.1
+        ax.set(
+            title=attribute,
+            xlabel=r"Metabolites (ranked)",
+            ylabel=r"Change with COVID-10 severity (signed -log10(p-value))",
+            ylim=(-v, v),
+        )
+    ax0.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    from matplotlib.lines import Line2D
+
+    p = qglm.min()
+    s0 = Line2D([0], [0], marker="o", label="1.0 (max)", markersize=np.sqrt(10 + 1))
+    s1 = Line2D(
+        [0],
+        [0],
+        marker="o",
+        label=f"{p:.3e} (min)",
+        markersize=np.sqrt(10 + 2.5 ** -np.log10(p)),
+    )
+    ax1.legend(handles=[s0, s1], title="FDR", loc="upper left", bbox_to_anchor=(1, 0))
+    ax1.axvline((ax1.get_xlim()[1] - ax1.get_xlim()[0]) / 2, linestyle="--", color="grey")
+    ax0.axvline(n_top, linestyle="--", color="grey")
+    ax0.axvline(score.shape[0] - n_top, linestyle="--", color="grey")
+    fig.savefig(
+        output_prefix + "rank_vs_change.scatter.svg",
+        **figkws,
+    )
+
+    # Plot volcano
+    data = (
+        res_glm.reset_index()
+        .rename(
+            columns={
+                "feature": "Variable",
+                "coefs": "hedges",
+                "pvalues": "p-unc",
+                "qvalues": "p-cor",
+            }
+        )
+        .assign(A="Healthy", B="High COVID-19 severity")
+    )
+    fig = volcano_plot(
+        stats=data.reset_index(drop=True), diff_threshold=0.01, invert_direction=False
+    )
+    fig.savefig(
+        output_prefix + "GLM.volcano_plot.svg",
+        **figkws,
+    )
+
+    # Plot heatmap of differential only
+    n_top = 100
+    f = cglm.abs().sort_values().tail(n_top).index.drop_duplicates()
+    f = cglm.loc[f].sort_values().index.drop_duplicates()
+    stats = (
+        (-np.log10(pglm.to_frame("-log10(p-value)")))
+        .join(cglm.rename("Coefficient"))
+        .join((qglm < 0.05).to_frame("Significant"))
+        .groupby(level=0)
+        .mean()
+    )
+
+    so = score_signature(x, diff=stats["Coefficient"]).sort_values()
+
+    grid = clustermap(
+        x.loc[so.index, f],
+        config="z",
+        row_colors=y[attribute].to_frame().join(so),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"GLM.clustermap.top_{n_top}.svg",
+        **figkws,
+    )
+
+    grid = clustermap(
+        x.loc[so.index, f],
+        row_cluster=False,
+        col_cluster=False,
+        config="z",
+        row_colors=y[attribute].to_frame().join(so),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"GLM.clustermap.top_{n_top}.sorted.svg",
+        **figkws,
+    )
+
+
+def score_signature(x: DataFrame, diff: Series) -> Series:
     """
     Score samples based on signature.
     """
@@ -1799,8 +2029,8 @@ def score_signature(x: DataFrame, diff: Series):
     # sum the value of each side
     n = xz.shape[1]
     scores = (
-        -(xz[up].mean(axis=1) * (float(up.size) / n))
-        + (xz[down].mean(axis=1) * (float(down.size) / n))
+        (xz[up].mean(axis=1) * (float(up.size) / n))
+        - (xz[down].mean(axis=1) * (float(down.size) / n))
     ).rename("signature_score")
     return scores
 
@@ -2021,6 +2251,19 @@ def cross_data_type_predictions() -> None:
     plt.close(grid.fig)
 
 
+def _load_model(model, filename):
+    h5 = h5py.File(filename, "r")
+    for key, value in h5.attrs.items():
+        setattr(model, key, value)
+    for di in range(len(h5.keys())):
+        ds = "dataset%d" % di
+        for key, value in h5[ds].items():
+            if di == 0:
+                setattr(model, key, [])
+            model.__getattribute__(key).append(value[()])
+    h5.close()
+
+
 def integrate_nmr_flow() -> None:
     """
     Integrate the two data types on common ground
@@ -2083,7 +2326,7 @@ def integrate_nmr_flow() -> None:
         # # but I don't think that says anything about how correct they are.
         ccaCV.train([xz1.values, xz2.values])
         ccaCV.save(model_f)
-    ccaCV.load(model_f)
+    _load_model(ccaCV, model_f)
 
     n_comp = ccaCV.best_numCC
     reg = ccaCV.best_reg
@@ -2092,7 +2335,7 @@ def integrate_nmr_flow() -> None:
     x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
 
     o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
-    metrics = assess_integration(
+    metrics, anndata = assess_integration(
         a=x1_cca,
         b=x2_cca,
         a_meta=y,
@@ -2110,12 +2353,21 @@ def integrate_nmr_flow() -> None:
             "WHO_score_sample",
             "patient_code",
         ],
+        metrics=["silhouette_score", "anova"],
         plot=True,
+        return_anndata=True,
         algo_kwargs=dict(umap=dict(gamma=25)),
         plt_kwargs=dict(s=100),
         cmaps=["Set1", "Set2", "Dark2", "Dark2", "Dark2", "inferno", None],
     )
-    pd.DataFrame(metrics)
+    metrics.to_csv(output_dir / "rCCA_integration.metrics.csv")
+
+    # Checkout the clusters from clustering on CCA-space
+    import scanpy as sc
+
+    sc.tl.leiden(anndata, 0.5)
+    fig = sc.pl.umap(anndata, color=anndata.obs.columns, show=False)[0].figure
+    fig.savefig(output_dir / "rCCA_integration.leiden_clustering_on_CCA_space.UMAP.svg", **figkws)
 
     # Plot in light of attributes
     x_comb = pd.concat(
@@ -2144,50 +2396,244 @@ def integrate_nmr_flow() -> None:
         output_dir / "rCCA_integration.sample_correlation.clustermap.attributes.svg", **figkws
     )
 
-    fig = plot_projection(x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5)
-    fig.savefig(
-        output_dir / "rCCA_integration.all_CCs.attributes.scatter.svg",
+    # Let's investigate the new clusters of patients (stratification)
+    from scipy.cluster.hierarchy import fcluster
+
+    clust = fcluster(grid.dendrogram_col.linkage, t=6, criterion="maxclust")
+    order = [5, 4, 3, 6, 1, 2]
+    labels = ["Healthy", "Mild2", "Mild1", "Severe2", "Severe1", "Convalescent"]
+    clust = pd.Series(clust, index=x_comb.index).replace(dict(zip(order, labels)))
+    cat = pd.Categorical(clust, ordered=True, categories=labels)
+    clust = pd.Series(cat, index=clust.index, name="cluster")
+
+    # # check clustering is correct
+    grid2 = clustermap(x_comb.T.corr(), cmap="RdBu_r", center=0, rasterized=True, row_colors=clust)
+    grid2.fig.savefig(
+        output_dir / "rCCA_integration.sample_correlation.clustermap.clusters_labeled.svg", **figkws
+    )
+    # # See how clinical parameters are different between groups
+    rem = [
+        "patient_code",
+        "Medium_ethanol",
+        "Isopropyl_alcohol",
+        "Low_glucose",
+        "High_lactate",
+        "High_pyruvate",
+        "Gluconolactone",
+        "Low_protein",
+        "Below_limit_of_quantification",
+        "sample_under_intubation",
+        "days_since_tosilizumab_start",
+    ]
+
+    # # # simple mean
+    y_diff = y_comb.groupby(clust).mean().T.dropna().drop(rem).astype(float)
+    y_diff = y_diff.loc[y_diff.sum(1) > 0]
+    heat = clustermap(y_diff, z_score=0, col_cluster=False, center=0, cmap="RdBu_r", figsize=(8, 5))
+    heat.savefig(
+        output_dir / "rCCA_integration.sample_clustering.clinical_parameters.mean.svg",
         **figkws,
     )
-    plt.close(fig)
-
-    # Predict other data type for each one
-    w1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
-    w2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
-
-    n = 10
-    f1 = w1[0].abs().sort_values().tail(n + 1).index[::-1]
-    f2 = w2[0].abs().sort_values().tail(n + 1).index[::-1]
-
-    fig, axes = plt.subplots(2, n, figsize=(3 * n, 3 * 2))
-    for rank in range(n):
-        axes[0, rank].scatter(x1_cca[0], x1[f1[rank]], alpha=0.5, s=5)
-        axes[0, rank].set(xlabel="CCA1", ylabel=f1[rank])
-        axes[1, rank].scatter(x2_cca[0], x2[f2[rank]], alpha=0.5, s=5)
-        axes[1, rank].set(xlabel="CCA1", ylabel=f2[rank])
-    fig.savefig(
-        output_dir / "rCCA_integration.CC1.top_variables.scatter.svg",
+    heat = clustermap(
+        y_diff,
+        z_score=0,
+        row_cluster=False,
+        col_cluster=False,
+        center=0,
+        cmap="RdBu_r",
+        figsize=(8, 5),
+    )
+    heat.savefig(
+        output_dir / "rCCA_integration.sample_clustering.clinical_parameters.mean.sorted.svg",
         **figkws,
     )
-    plt.close(fig)
 
-    o1 = z_score(x1_cca @ w2.T)
-    o2 = z_score(x2_cca @ w1.T)
+    # # # with LMs
+    import statsmodels.formula.api as smf
 
-    unsupervised(
-        o1,
-        y,
-        attributes=attributes,
-        data_type="flow_cytometry",
-        suffix="_predicted_from_NMR",
+    cats = y_comb.columns[y_comb.dtypes == "category"].tolist()
+    cats = [c for c in cats if y_comb[c].cat.ordered]
+    d = y_comb[y_diff.index.tolist()].astype(float).join(y_comb[cats].apply(lambda x: x.cat.codes))
+
+    _res_glm = list()
+    for feat in tqdm(d.columns, desc="feature", position=1):
+        mdf = smf.glm(f"{feat} ~ cluster - 1", d.join(clust)).fit()
+        res = mdf.params.to_frame("coefs").join(mdf.pvalues.rename("pvalues")).assign(feature=feat)
+        _res_glm.append(res)
+    res_glm = pd.concat(_res_glm).rename_axis(index="group")
+    res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+    res_glm["group"] = res_glm.index.str.split("[").map(lambda x: x[1].replace("]", ""))
+    coefs = res_glm.reset_index(drop=True).pivot_table(
+        index="feature", columns="group", values="coefs"
+    )[clust.cat.categories]
+
+    coefs = coefs.drop(["patient_group", "WHO_score_patient"])
+    heat = clustermap(coefs, z_score=0, col_cluster=False, center=0, cmap="PuOr_r", figsize=(8, 5))
+    heat.savefig(
+        output_dir
+        / "rCCA_integration.sample_clustering.clinical_parameters.regression_coefficients.svg",
+        **figkws,
     )
-    unsupervised(
-        o2,
-        y,
-        attributes=attributes,
-        data_type="NMR",
-        suffix="_predicted_from_flow_cytometry",
+    heat = clustermap(
+        coefs,
+        z_score=0,
+        row_cluster=False,
+        col_cluster=False,
+        center=0,
+        cmap="PuOr_r",
+        figsize=(8, 5),
     )
+    heat.savefig(
+        output_dir
+        / "rCCA_integration.sample_clustering.clinical_parameters.regression_coefficients.sorted.svg",
+        **figkws,
+    )
+
+    # # See how immune-metabolic parameters are different between groups
+    x1i = xz1.copy()
+    x1i.index = x1i.index + "_NMR"
+
+    # # # quick-and-dirty sum difference of means
+    means1 = x1i.groupby(clust.reindex(x1i.index)).mean()
+    rank1 = (means1 - means1.mean(0)).abs().sum().sort_values()
+    x2i = xz2.copy()
+    x2i.index = x2i.index + "_Flow"
+    means2 = x2i.groupby(clust.reindex(x2i.index)).mean()
+    rank2 = (means2 - means2.mean(0)).abs().sum().sort_values()
+
+    n_top = 15
+    v1, v2 = rank1.tail(n_top).index.tolist(), rank2.tail(n_top).index.tolist()
+    ce1 = x1i[v1].groupby(clust.reindex(x1i.index)).mean()
+    ce2 = x2i[v2].groupby(clust.reindex(x2i.index)).mean()
+    e = ce1.T.append(ce2.T)
+    heat = clustermap(
+        e,
+        cmap="RdBu_r",
+        metric="correlation",
+        col_cluster=False,
+        center=0,
+        figsize=(8, 5),
+        z_score=1,
+    )
+    heat.savefig(
+        output_dir
+        / f"rCCA_integration.sample_clustering.top_{n_top}_varying_features.mean_difference.svg",
+        **figkws,
+    )
+
+    # # # with LMs
+    import statsmodels.formula.api as smf
+
+    n_top = 3
+    x1i = xz1.copy()
+    x1i.index = x1i.index + "_Flow"
+    _res_glm1 = list()
+    for feat in tqdm(x1i.columns, desc="feature", position=1):
+        mdf = smf.glm(f"{feat} ~ cluster - 1", x1i.join(clust)).fit()
+        res = mdf.params.to_frame("coefs").join(mdf.pvalues.rename("pvalues")).assign(feature=feat)
+        _res_glm1.append(res)
+    res_glm1 = pd.concat(_res_glm1).rename_axis(index="group")
+    res_glm1["qvalues"] = pg.multicomp(res_glm1["pvalues"].values, method="fdr_bh")[1]
+    v1 = (
+        res_glm1.reset_index()
+        .set_index("feature")
+        .groupby("group")["pvalues"]
+        .nsmallest(n_top)
+        .index.get_level_values(1)
+        .unique()
+    )
+
+    x2i = xz2.copy()
+    x2i.index = x2i.index + "_Flow"
+    _res_glm2 = list()
+    mods = {r"+": "__p__", r"-": "__m__", r"/": "__sla__", r"(": "__OP__", r")": "__CL__"}
+    for k, v in mods.items():
+        x2i.columns = x2i.columns.str.replace(k, v, regex=False)
+    for feat in tqdm(x2i.columns, desc="feature", position=1):
+        mdf = smf.glm(f"{feat} ~ cluster - 1", x2i.join(clust)).fit()
+        res = mdf.params.to_frame("coefs").join(mdf.pvalues.rename("pvalues")).assign(feature=feat)
+        _res_glm2.append(res)
+    res_glm2 = pd.concat(_res_glm2).rename_axis(index="group")
+    res_glm2["qvalues"] = pg.multicomp(res_glm2["pvalues"].values, method="fdr_bh")[1]
+    v2 = (
+        res_glm2.reset_index()
+        .set_index("feature")
+        .groupby("group")["pvalues"]
+        .nsmallest(n_top)
+        .index.get_level_values(1)
+        .unique()
+    )
+    for k, v in mods.items():
+        v2 = v2.str.replace(v, k, regex=False)
+    x2i = xz2.copy()
+    x2i.index = x2i.index + "_Flow"
+
+    ce1 = x1i[v1].groupby(clust.reindex(x1i.index)).mean()
+    ce2 = x2i[v2].groupby(clust.reindex(x2i.index)).mean()
+    e = ce1.T.append(ce2.T)
+    # e = e.sort_values(e.columns.tolist(), ascending=False)
+    # heat = clustermap(e, cmap="RdBu_r", row_cluster=False, col_cluster=False, center=0, figsize=(8, 5), z_score=0)
+    heat = clustermap(
+        e,
+        cmap="RdBu_r",
+        metric="correlation",
+        col_cluster=False,
+        center=0,
+        figsize=(8, 5),
+        z_score=1,
+    )
+    heat.savefig(
+        output_dir
+        / f"rCCA_integration.sample_clustering.top_{n_top}_varying_features_per_cluster.regression.svg",
+        **figkws,
+    )
+
+    # fig = plot_projection(
+    #     x_comb, y_comb, factors=attributes, algo_name="CCA", n_dims=5, palettes=palettes
+    # )
+    # fig.savefig(
+    #     output_dir / "rCCA_integration.all_CCs.attributes.scatter.svg",
+    #     **figkws,
+    # )
+    # plt.close(fig)
+
+    # # Predict other data type for each one
+    # w1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
+    # w2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
+
+    # n = 10
+    # f1 = w1[0].abs().sort_values().tail(n + 1).index[::-1]
+    # f2 = w2[0].abs().sort_values().tail(n + 1).index[::-1]
+
+    # fig, axes = plt.subplots(2, n, figsize=(3 * n, 3 * 2))
+    # for rank in range(n):
+    #     axes[0, rank].scatter(x1_cca[0], x1[f1[rank]], alpha=0.5, s=5)
+    #     axes[0, rank].set(xlabel="CCA1", ylabel=f1[rank])
+    #     axes[1, rank].scatter(x2_cca[0], x2[f2[rank]], alpha=0.5, s=5)
+    #     axes[1, rank].set(xlabel="CCA1", ylabel=f2[rank])
+    # fig.savefig(
+    #     output_dir / "rCCA_integration.CC1.top_variables.scatter.svg",
+    #     **figkws,
+    # )
+    # plt.close(fig)
+
+    # o1 = z_score(x1_cca @ w2.T)
+    # o2 = z_score(x2_cca @ w1.T)
+
+    # unsupervised(
+    #     o1,
+    #     y,
+    #     attributes=attributes,
+    #     data_type="flow_cytometry",
+    #     suffix="_predicted_from_NMR",
+    # )
+    # unsupervised(
+    #     o2,
+    #     y,
+    #     attributes=attributes,
+    #     data_type="NMR",
+    #     suffix="_predicted_from_flow_cytometry",
+    # )
 
 
 def assess_integration(
@@ -2201,17 +2647,19 @@ def assess_integration(
     algos: tp.Sequence[str] = ["pca", "umap"],
     attributes: tp.Sequence[str] = ["dataset"],
     only_matched_attributes: bool = False,
+    metrics: tp.Sequence[str] = ["silhouette_score"],
     subsample: str = None,
     plot: bool = True,
+    return_anndata: bool = False,
     algo_kwargs: tp.Dict[str, tp.Dict[str, tp.Any]] = None,
     plt_kwargs: tp.Dict[str, tp.Any] = None,
     cmaps: tp.Sequence[str] = None,
-) -> tp.Dict[str, tp.Dict[str, float]]:
-    """
-    Keyword arguments are passed to the scanpy plotting function.
-    """
+) -> tp.Union[DataFrame, tp.Tuple[DataFrame, AnnData]]:
+    """Keyword arguments are passed to the scanpy plotting function."""
     from sklearn.metrics import silhouette_score
     from imc.graphics import rasterize_scanpy
+    from anndata import AnnData
+    import scanpy as sc
 
     if plot:
         assert output_prefix is not None, "If `plot`, `output_prefix` must be given."
@@ -2267,14 +2715,29 @@ def assess_integration(
         sel = sel.reset_index().drop("dataset", 1)
         adata = adata[pd.concat([adata.obs[attr].isin(sel[attr]) for attr in attrs], 1).all(1), :]
 
-    scores: tp.Dict[str, tp.Dict[str, float]] = dict()
+    scores: tp.Dict[str, tp.Dict[str, tp.Dict[str, float]]] = dict()
     for i, algo in enumerate(algos):
         scores[algo] = dict()
         for j, attr in enumerate(attributes):
-            scores[algo][attr] = silhouette_score(adata.obsm[f"X_{algo}"], adata.obs[attr])
+            scores[algo][attr] = dict()
+            if "silhouette_score" in metrics:
+                scores[algo][attr]["silhouette_score"] = silhouette_score(
+                    adata.obsm[f"X_{algo}"], adata.obs[attr]
+                )
+            if "anova" in metrics:
+                d = pd.DataFrame(adata.obsm[f"X_{algo}"], index=adata.obs.index).join(
+                    adata.obs[attr]
+                )
+                res = pg.anova(data=d, dv=0, between=attr).squeeze()
+                scores[algo][attr]["anova"] = res["p-unc"]
+    scores_df = pd.concat(
+        [pd.DataFrame(v).assign(projection=k) for k, v in scores.items()]
+    ).rename_axis(index="metric")
+
+    to_return = scores_df if not return_anndata else (scores_df, adata)
 
     if not plot:
-        return scores
+        return to_return
 
     # Plot
     adata = adata[adata.obs.sample(frac=1).index, :]
@@ -2302,9 +2765,11 @@ def assess_integration(
                 **cmap_kws,
                 ax=ax,
             )
-            s = scores[algo][attr]
+
+            s = scores_df.query(f"projection == '{algo}'")[attr]
+            s = "; ".join([f"{k}: {v:.3e}" for k, v in s.items()])
             ax.set(
-                title=f"{attr}, score: {s:.3f}",
+                title=f"{attr}\n{s}",
                 xlabel=algo.upper() + "1",
                 ylabel=algo.upper() + "2",
             )
@@ -2322,10 +2787,11 @@ def assess_integration(
             ax.text(p.mean(), 0.5, s=s, color=cmap[i])
     fig.savefig(tp.cast(Path, output_prefix) + ".joint_datasets.kde_distribution.svg", **figkws)
     plt.close(fig)
-    return scores
+    return to_return
 
 
 def predict_outcomes() -> None:
+    from joblib import Parallel, delayed
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
     from sklearn.feature_selection import SelectKBest, mutual_info_classif
@@ -2335,8 +2801,6 @@ def predict_outcomes() -> None:
     from sklearn.svm import LinearSVC, NuSVC
     from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
     from sklearn.model_selection import cross_validate
-
-    from joblib import Parallel, delayed
 
     def fit(_, model, X, y, k=None):
         from collections import defaultdict
@@ -2414,11 +2878,24 @@ def predict_outcomes() -> None:
     xz1 = z_score(x1)
     xz2 = z_score(x2)
 
+    y["first_sample"] = 0
+    for pat in y["patient_code"].unique():
+        s = y.loc[y["patient_code"] == pat].sort_values("date_sample").index[0]
+        y.loc[s, "first_sample"] = 1
+
     # Use only mild-severe patients
-    m = y.query("patient_group.isin(['moderate', 'severe']).values", engine="python")
+    y.loc[y["WHO_score_patient"] <= 4, "patient_severity"] = "low"
+    y.loc[y["WHO_score_patient"] > 4, "patient_severity"] = "high"
+    y["patient_severity"] = pd.Categorical(
+        y["patient_severity"], ordered=True, categories=["low", "high"]
+    )
+    # m = y.query("patient_group.isin(['moderate', 'severe']).values")
+    # m = y.query("patient_group.isin(['moderate', 'severe']).values & first_sample == 1")
+    m = y.query("patient_severity.isin(['low', 'high']).values & first_sample == 1")
 
     # Convert classes to binary
-    target = m["patient_group"].cat.remove_unused_categories().cat.codes
+    # target = m["patient_group"].cat.remove_unused_categories().cat.codes
+    target = m["patient_severity"].cat.remove_unused_categories().cat.codes
 
     # Align
     xz1 = xz1.reindex(target.index)
@@ -2435,17 +2912,29 @@ def predict_outcomes() -> None:
         NuSVC,
         QuadraticDiscriminantAnalysis,
     ]
-    for label, k in [("", None), (".feature_selection", 8)]:
-        for model in insts:
+    predict_options = [
+        ("", None),
+        (".feature_selection_k8", 8),
+        (".feature_selection_k6", 6),
+        (".feature_selection_k5", 5),
+        (".feature_selection_k4", 4),
+        (".feature_selection_k3", 3),
+        (".feature_selection_k2", 2),
+        (".feature_selection_k1", 1),
+    ]
+
+    for model in insts:
+        for label, k in predict_options:
+            # for dtype, X in [("combined", xz1.join(xz2))]:
             for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
                 name = str(type(model())).split(".")[-1][:-2]
-                print(name, dtype)
+                print(name, label, dtype)
 
                 # Fit
                 res = Parallel(n_jobs=-1)(
                     delayed(fit)(i, model=model, X=X, y=target, k=k) for i in range(N)
                 )
-                # Get ROC_AUC scores only
+                # Get ROC_AUC scores
                 scores = pd.DataFrame(
                     np.asarray([r[:-2] for r in res]),
                     columns=[
@@ -2456,17 +2945,36 @@ def predict_outcomes() -> None:
                     ],
                 ).rename_axis(index="iteration")
                 scores.to_csv(
-                    output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv"
+                    output_dir
+                    # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv"
+                    / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv"
+                )
+                # Get coefficients/variable ranks
+                real_coefs = pd.DataFrame([r[-2] for r in res])
+                random_coefs = pd.DataFrame([r[-1] for r in res])
+                coefs = (
+                    real_coefs.assign(type="real")
+                    .append(random_coefs.assign(type="random"))
+                    .fillna(0)
+                    .rename_axis(index="iteration")
+                )
+                coefs.to_csv(
+                    output_dir
+                    # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv"
+                    / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv"
                 )
 
     for model in insts:
+        # Only with full model
         label = ""
         k = None
         name = str(type(model())).split(".")[-1][:-2]
         _res = list()
         for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
             scores = pd.read_csv(
-                output_dir / f"severe-mild_prediction.{dtype}.{name}{label}.scores.csv",
+                output_dir
+                # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
+                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
                 index_col=0,
             )
             p = scores.loc[:, scores.columns.str.contains("test")].melt()
@@ -2483,7 +2991,8 @@ def predict_outcomes() -> None:
         fig.axes[0].axhline(0.5, linestyle="--", color="grey")
         fig.savefig(
             output_dir
-            / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.svg",
+            # / f"severe-mild_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.svg",
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.svg",
             **figkws,
         )
 
@@ -2493,12 +3002,91 @@ def predict_outcomes() -> None:
 
         s = p.groupby("dataset")["value"].mean().squeeze()
         for i, q in enumerate(s.index):
-            fig.axes[0].text(i, 0.7, s=f"{s[q]:.3f}", ha="center")
+            fig.axes[0].text(i, 0.8, s=f"{s[q]:.3f}", ha="center")
         fig.savefig(
             output_dir
-            / f"severe-mild_prediction.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
+            # / f"severe-mild_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
             **figkws,
         )
+
+        # Look into performance (de)crease with less predictors
+        _perf = list()
+        for label, k in predict_options:
+            p = pd.read_csv(
+                output_dir
+                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
+                index_col=0,
+            )
+            p = p.loc[:, p.columns.str.contains("test")].melt()
+            _perf.append(p.assign(n_features=k))
+        perf = pd.concat(_perf).fillna(x1.shape[1])
+        perf["n_features"] = pd.Categorical(perf["n_features"], ordered=True)
+
+        fig, stats = swarmboxenplot(data=perf, x="variable", y="value", hue="n_features")
+        fig.savefig(
+            output_dir
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.svg",
+            **figkws,
+        )
+
+        fig, stats = swarmboxenplot(
+            data=perf.query("~variable.str.contains('random').values"), x="n_features", y="value"
+        )
+        fig.savefig(
+            output_dir
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.only_real.svg",
+            **figkws,
+        )
+
+        # Look at the top variables
+        _coefs = list()
+        for label, k in predict_options:
+            c = pd.read_csv(
+                output_dir
+                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv",
+                index_col=0,
+            )
+            c2 = (c.T.drop("type") / c.sum(1)).T
+            c2["type"] = c["type"]
+            _coefs.append(c2.assign(n_features=k))
+
+        coefs = pd.concat(_coefs).fillna(0)
+        r = (
+            coefs.groupby(["n_features", "type"])
+            .mean()
+            .groupby(level=1)
+            .mean()
+            .T.sort_values("real")
+            * 100
+        )
+        r["log_ratio"] = np.log(r["real"] / r["random"])
+
+        fig, axes = plt.subplots(1, 2, figsize=(2 * 4.2, 4))
+        for ax in axes:
+            ax.scatter(r["log_ratio"], r["real"], s=2, alpha=0.5)
+            ax.set(xlabel="Log ratio (real/randomized)", ylabel="Importance")
+        axes[1].set(yscale="log")
+        fig.savefig(
+            output_dir
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.svg",
+            **figkws,
+        )
+
+        rr = r.tail(20)
+        fig, ax = plt.subplots(1, 1, figsize=(2 * 4.2, 4))
+        rank = rr["real"].rank(ascending=False)
+        ax.scatter(rank, rr["real"], s=5)
+        for idx in rr.index:
+            ax.text(rank[idx], rr.loc[idx, "real"], s=idx, rotation=90, ha="right", va="top")
+        ax.set(xlabel="Importance (rank)", ylabel="Importance", yscale="log")
+        fig.savefig(
+            output_dir
+            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.top_20.svg",
+            **figkws,
+        )
+
+        # Use this score to relate to clinical parameters
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():

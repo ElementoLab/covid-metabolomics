@@ -26,6 +26,8 @@ Nightingale:
  - UKBB: https://doi.org/10.1101/2020.07.24.20158675
  - Dierckx et al: https://www.medrxiv.org/content/10.1101/2020.11.09.20228221v1 (no data, only supplement)
 
+Mass spec:
+ - https://www.medrxiv.org/content/10.1101/2021.02.05.21251173v1
 
 Immunophenotyping, Cytokines, Chemokines:
  - Lucas et al (https://doi.org/10.1038/s41586-020-2588-y)
@@ -134,3 +136,23 @@ Enrichment analysis
 
 Intubation treatment -> propofol has high lipid concentration
 See relationship between intubation and metabolite changes
+
+
+
+## 2021/08/16
+
+- TODO (analysis):
+ - Get phenotype data from UKBB
+ - See all other datasets: overlap signatures
+ - [x] Prediction: titrate down n. of features, correlate predictors with clinical factors
+ - [x] Show variables enriched in joint dataset stratification
+ - [x] Show clincal groups enriched in joint dataset stratification
+ - Add DC with additional demographic factors to supplement
+
+- Interpretation:
+ - Group immune variables by?
+
+- Discussion:
+ - Specific to COVID or is it just measuring general disease severity?
+ - Targeting the metabolome to influence COVID outcome/resolution
+

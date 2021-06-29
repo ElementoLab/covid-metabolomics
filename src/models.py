@@ -7,7 +7,7 @@ import pymde
 import scanpy as sc
 from anndata import AnnData
 
-from imc.types import DataFrame, Path
+from imc.types import DataFrame, Series, Path, Array
 
 __all__ = ["DataSet", "PyMDE", "DiffMap", "AnnData"]
 
@@ -65,7 +65,7 @@ class PyMDE:
             )
         return self
 
-    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
+    def fit_transform(self, x, embedding_dim: int = 2, **kwargs) -> Array:
         if isinstance(x, pd.DataFrame):
             x = x.values
         embedding = (
@@ -75,8 +75,19 @@ class PyMDE:
 
 
 class DiffMap:
-    def fit_transform(self, x, embedding_dim: int = 2, **kwargs):
+    def fit_transform(self, x, embedding_dim: int = 2, **kwargs) -> Array:
         a = AnnData(x)
         sc.pp.neighbors(a, use_rep="X")
-        sc.tl.diffmap(a)
+        sc.tl.pca(a, n_comps=1)
         return a.obsm["X_diffmap"][:, 1 : 1 + embedding_dim]
+
+
+class DPT:
+    def fit_transform(
+        self, x, root_obs: str, embedding_dim: int = 2, **kwargs
+    ) -> tp.Tuple[Array, Series]:
+        a = AnnData(x)
+        sc.pp.neighbors(a, use_rep="X")
+        a.var["xroot"] = a[root_obs, :].X.squeeze()
+        sc.tl.dpt(a)
+        return a.obsm["X_diffmap"][:, 1 : 1 + embedding_dim], a.obs["dpt_pseudotime"]
