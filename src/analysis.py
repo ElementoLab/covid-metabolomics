@@ -57,6 +57,8 @@ def main(cli: tp.Sequence[str] = None) -> int:
     feature_enrichment()
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
 
+    sns.regplot(x1["GlycA"], y["days_since_tosilizumab_start"])
+
     # Investigate NMR features
     # # feature frequency
     plot_nmr_feature_annotations()
@@ -1655,20 +1657,20 @@ def supervised_joint(
         ax.set(
             title=attribute,
             xlabel=r"Metabolites (ranked)",
-            ylabel=r"Change with COVID-10 severity (signed -log10(p-value))",
+            ylabel=r"Change with COVID-19 severity (signed -log10(p-value))",
             ylim=(-v, v),
         )
     ax0.legend(loc="upper left", bbox_to_anchor=(1, 1))
     from matplotlib.lines import Line2D
 
-    p = qmlm.min()
+    _p = qmlm.min()
     s0 = Line2D([0], [0], marker="o", label="1.0 (max)", markersize=np.sqrt(10 + 1))
     s1 = Line2D(
         [0],
         [0],
         marker="o",
-        label=f"{p:.3e} (min)",
-        markersize=np.sqrt(10 + 2.5 ** -np.log10(p)),
+        label=f"{_p:.3e} (min)",
+        markersize=np.sqrt(10 + 2.5 ** -np.log10(_p)),
     )
     ax1.legend(handles=[s0, s1], title="FDR", loc="upper left", bbox_to_anchor=(1, 0))
     ax1.axvline((ax1.get_xlim()[1] - ax1.get_xlim()[0]) / 2, linestyle="--", color="grey")
@@ -1744,14 +1746,18 @@ def supervised_joint(
         )
 
     # Plot volcano
-    data = res_mlm.rename(
-        columns={
-            "feature": "Variable",
-            "coefs": "hedges",
-            "pvalues": "p-unc",
-            "qvalues": "p-cor",
-        }
-    ).assign(A="Healthy", B="High COVID-19 severity")
+    data = (
+        res_mlm.reset_index()
+        .rename(
+            columns={
+                "feature": "Variable",
+                "coefs": "hedges",
+                "pvalues": "p-unc",
+                "qvalues": "p-cor",
+            }
+        )
+        .assign(A="Healthy", B="High COVID-19 severity")
+    )
     fig = volcano_plot(
         stats=data.reset_index(drop=True), diff_threshold=0.01, invert_direction=False
     )
@@ -1819,9 +1825,8 @@ def supervised_temporal(
 
     test_vars = ["days_since_intubation_start", "days_since_tosilizumab_start"]
 
-    # Use also a MLM and compare to GLM
     stats_f = output_dir / "supervised.temporal.model_fits.csv"
-    attrs = ["age", "race", "bmi", "WHO_score_sample"]
+    attrs = ["sex", "race", "age", "bmi", "WHO_score_sample"]
 
     if not stats_f.exists() or overwrite:
         model_str = "{} ~ " + " + ".join(attrs + test_vars)
@@ -1830,7 +1835,7 @@ def supervised_temporal(
 
         # # convert ordinal categories to numeric
         for col in data.columns:
-            if data[col].dtype.name == "category":
+            if data[col].dtype.name == "category" and col not in ["sex", "race"]:
                 data[col] = data[col].cat.codes.astype(float).replace(-1, np.nan)
             if data[col].dtype.name == "Int64":
                 data[col] = data[col].astype(float)
@@ -1839,8 +1844,10 @@ def supervised_temporal(
 
         # # GLM
         _res_glm = list()
+        # _red = list()
         for feat in tqdm(x.columns, desc="feature", position=1):
             mdf = smf.glm(model_str.format(feat), data).fit()
+            # _red.append(mdf.resid_pearson)
             res = (
                 mdf.params.to_frame("coefs")
                 .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
@@ -1851,9 +1858,54 @@ def supervised_temporal(
         res_glm = pd.concat(_res_glm)
         res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
 
+        # red = pd.concat(_red)
+        # sns.histplot(red)
         res = res_glm.assign(model="glm")
         res = res.rename_axis(index="contrast")
         res.to_csv(stats_f)
+
+    fig, axes = plt.subplots(1, 4, figsize=(4 * 3, 3))
+    q = y[test_vars].dropna()
+    axes[0].scatter(*q.values.T, alpha=0.5)
+    axes[0].set(xlabel=test_vars[0], ylabel=test_vars[1])
+
+    q1 = res.loc[test_vars[0]].set_index("feature")["coefs"]
+    q2 = res.loc[test_vars[1]].set_index("feature")["coefs"]
+    axes[1].scatter(q1, q2, alpha=0.5)
+    axes[1].set(xlabel=f"Coefficient {test_vars[0]}", ylabel=f"Coefficient {test_vars[1]}")
+
+    q1 = res.loc["WHO_score_sample"].set_index("feature")["coefs"]
+    q2 = res.loc[test_vars[1]].set_index("feature")["coefs"]
+    axes[2].scatter(q1, q2, alpha=0.5)
+    sns.regplot(x=q1, y=q2, ax=axes[2], color="grey", scatter=False)
+    axes[2].set(xlabel=f"Coefficient WHO_score_sample", ylabel=f"Coefficient {test_vars[1]}")
+    stat = pg.corr(q1, q2).squeeze()
+    axes[2].set(title=f"r = {stat['r']:.3f}; p = {stat['p-val']:.3e}")
+
+    q1 = (
+        pd.read_csv(output_dir / "supervised.joint_model.model_fits.csv", index_col=0)
+        .loc["WHO_score_sample"]
+        .query("model == 'mlm'")
+        .set_index("feature")["coefs"]
+        .reindex(q2.index)
+    )
+    q2 = res.loc[test_vars[1]].set_index("feature")["coefs"]
+    axes[3].scatter(q1, q2, alpha=0.5)
+    axes[3].axhline(0, linestyle="--", color="grey")
+    axes[3].axvline(0, linestyle="--", color="grey")
+    sns.regplot(x=q1, y=q2, ax=axes[3], color="grey", scatter=False)
+    axes[3].set(
+        xlabel=f"Coefficient WHO_score_sample joint model", ylabel=f"Coefficient {test_vars[1]}"
+    )
+    stat = pg.corr(q1, q2).squeeze()
+    axes[3].set(title=f"r = {stat['r']:.3f}; p = {stat['p-val']:.3e}")
+    fig.savefig(
+        output_dir / "supervised.temporal.tosilizumab.model_assessment_comparison.svg",
+        **figkws,
+    )
+
+    # c = res.pivot_table(index='contrast', columns='feature', values='coefs').drop("Intercept").T.corr()
+    # sns.heatmap(c)
 
     # Plot
     attribute = "days_since_tosilizumab_start"
@@ -1912,7 +1964,7 @@ def supervised_temporal(
         ax.set(
             title=attribute,
             xlabel=r"Metabolites (ranked)",
-            ylabel=r"Change with COVID-10 severity (signed -log10(p-value))",
+            ylabel=r"Change with Tociluzimab treatment (signed -log10(p-value))",
             ylim=(-v, v),
         )
     ax0.legend(loc="upper left", bbox_to_anchor=(1, 1))
@@ -1947,7 +1999,7 @@ def supervised_temporal(
                 "qvalues": "p-cor",
             }
         )
-        .assign(A="Healthy", B="High COVID-19 severity")
+        .assign(A="Early Tociluzimab treatment", B="Late Tociluzimab treatment")
     )
     fig = volcano_plot(
         stats=data.reset_index(drop=True), diff_threshold=0.01, invert_direction=False
@@ -1970,6 +2022,7 @@ def supervised_temporal(
     )
 
     so = score_signature(x, diff=stats["Coefficient"]).sort_values()
+    sof = so.loc[~pd.isnull(y[attribute])]
 
     grid = clustermap(
         x.loc[so.index, f],
@@ -1998,6 +2051,67 @@ def supervised_temporal(
     grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
     grid.fig.savefig(
         output_prefix + f"GLM.clustermap.top_{n_top}.sorted.svg",
+        **figkws,
+    )
+
+    ff = f[f.isin(stats.loc[stats["Significant"]].index)]
+
+    grid = clustermap(
+        x.loc[sof.index, ff],
+        config="z",
+        row_colors=y[attribute].to_frame().join(sof),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"GLM.clustermap.top_{n_top}.only_used_samples.svg",
+        **figkws,
+    )
+
+    grid = clustermap(
+        x.loc[sof.index, ff],
+        row_cluster=False,
+        col_cluster=False,
+        config="z",
+        row_colors=y[attribute].to_frame().join(sof),
+        col_colors=stats,
+        yticklabels=False,
+        cbar_kws=dict(label="Z-score"),
+    )
+    grid.ax_heatmap.set(xlabel=f"Features (top {n_top} features for '{attribute}'")
+    grid.fig.savefig(
+        output_prefix + f"GLM.clustermap.top_{n_top}.only_used_samples.sorted.svg",
+        **figkws,
+    )
+
+    # Illustrate top/bottom
+    _s = score.sort_values()
+
+    fig, axes = plt.subplots(2, 5, figsize=(5 * 3, 2 * 3))
+    for i, ax in enumerate(axes[0]):
+        n = _s.head(i + 1).tail(1).index[0]
+        sns.regplot(y[attribute], x[n], ax=ax, scatter_kws=dict(alpha=0.5))
+        ax.set(title=n, xlim=(-8, 52))
+    for i, ax in enumerate(axes[1]):
+        n = _s.tail(i + 1).head(1).index[0]
+        sns.regplot(y[attribute], x[n], ax=ax, scatter_kws=dict(alpha=0.5))
+        ax.set(title=n, xlim=(-8, 52))
+    fig.savefig(
+        output_prefix + "GLM.regplot.top_5.illustration.svg",
+        **figkws,
+    )
+
+    # Illustrate some non changing
+    variables = ["GlycA", "Albumin", "Phe", "ApoB_by_ApoA1", "XS_VLDL_PL"]
+    fig, axes = plt.subplots(1, len(variables), figsize=(len(variables) * 3, 1 * 3))
+    for i, ax in enumerate(axes):
+        n = variables[i]
+        sns.regplot(y[attribute], x[n], ax=ax, scatter_kws=dict(alpha=0.5))
+        ax.set(title=n, xlim=(-8, 52))
+    fig.savefig(
+        output_prefix + "GLM.regplot.non-significant.illustration.svg",
         **figkws,
     )
 
@@ -2038,58 +2152,72 @@ def score_signature(x: DataFrame, diff: Series) -> Series:
 def feature_enrichment() -> None:
     output_dir = (results_dir / "supervised").mkdir()
 
-    stats_f = output_dir / "supervised.joint_model.model_fits.csv"
-    stats = pd.read_csv(stats_f, index_col=0).query("model == 'mlm'")
-    var = get_nmr_feature_annotations()
-    groups = ["metagroup", "group", "subgroup", "lipid_class", "lipid_density", "lipid_size"]
+    stats_f1 = output_dir / "supervised.joint_model.model_fits.csv"
+    stats_f2 = output_dir / "supervised.temporal.model_fits.csv"
 
-    # Using PAGE
-    _res = list()
-    libraries = var_to_dict(var[groups])
-    for contrast in stats.index.drop("Intercept").unique():
-        s = stats.loc[contrast].set_index("feature")
-        enr = page(s["coefs"], libraries)
-        _res.append(enr.assign(contrast=contrast))
-    res = pd.concat(_res)
-    res["q"] = pg.multicomp(res["p"].values, method="fdr_bh")[1]
-    res.to_csv(output_dir / "enrichment.page.csv")
+    for stats_f, label, model in [
+        (stats_f1, "COVID_severity", "mlm"),
+        (stats_f2, "Tociluzimab_treatment", "glm"),
+    ]:
+        output_prefix = output_dir / f"enrichment.{label}."
+        stats = pd.read_csv(stats_f, index_col=0).query(f"model == '{model}'")
+        var = get_nmr_feature_annotations()
+        groups = ["metagroup", "group", "subgroup", "lipid_class", "lipid_density", "lipid_size"]
 
-    # # Plot
-    res = pd.read_csv(output_dir / "enrichment.page.csv", index_col=0)
-    p = res.query("contrast == 'WHO_score_sample'")
-    p = p.rename(columns={"term": "Variable", "Z": "hedges", "p": "p-unc", "q": "p-cor"})
-    p = p.groupby("Variable").mean().reset_index()
-    fig = volcano_plot(
-        p.assign(A="Healthy", B="High COVID-19 severity"),
-        diff_threshold=None,
-        n_top=15,
-        invert_direction=False,
-    )
-    fig.savefig(output_dir / "enrichment.page.volcano_plot.svg", **figkws)
+        # Using PAGE
+        _res = list()
+        libraries = var_to_dict(var[groups])
+        for contrast in stats.index.drop("Intercept").unique():
+            s = stats.loc[contrast].set_index("feature")
+            enr = page(s["coefs"], libraries)
+            _res.append(enr.assign(contrast=contrast))
+        res = pd.concat(_res)
+        res["q"] = pg.multicomp(res["p"].values, method="fdr_bh")[1]
+        res.to_csv(output_prefix + "page.csv")
 
-    # Using overrepresentation test
-    _res = list()
-    for contrast in stats.index.drop("Intercept").unique():
-        s = stats.loc[contrast].set_index("feature")
-        enr = enrich_categorical(s, var[groups], directional=True)
-        _res.append(enr.assign(contrast=contrast))
-    res = pd.concat(_res)
-    res.to_csv(output_dir / "enrichment.chi2_independence.csv", index=False)
+        # # Plot
+        res = pd.read_csv(output_prefix + "page.csv", index_col=0)
+        p = res.query("contrast == 'WHO_score_sample'")
+        p = p.rename(columns={"term": "Variable", "Z": "hedges", "p": "p-unc", "q": "p-cor"})
+        p = p.groupby("Variable").mean().reset_index()
+        fig = volcano_plot(
+            p.assign(A="Healthy", B="High COVID-19 severity"),
+            diff_threshold=None,
+            n_top=15,
+            invert_direction=False,
+        )
+        fig.savefig(output_prefix + "page.volcano_plot.svg", **figkws)
 
-    # # Plot
-    res = pd.read_csv(output_dir / "enrichment.chi2_independence.csv")
-    p = res.query("contrast == 'WHO_score_sample' & test == 'log-likelihood'").sort_values("pval")
-    p = p.rename(
-        columns={"attribute_item": "Variable", "cramer": "hedges", "pval": "p-unc", "qval": "p-cor"}
-    )
-    p = p.groupby("Variable").mean().reset_index()
-    fig = volcano_plot(
-        p.assign(A="Healthy", B="High COVID-19 severity"),
-        diff_threshold=None,
-        n_top=15,
-        invert_direction=False,
-    )
-    fig.savefig(output_dir / "enrichment.chi2_independence.volcano_plot.svg", **figkws)
+        # Using overrepresentation test
+        _res = list()
+        for contrast in stats.index.drop("Intercept").unique():
+            s = stats.loc[contrast].set_index("feature")
+            enr = enrich_categorical(s, var[groups], directional=True)
+            _res.append(enr.assign(contrast=contrast))
+        res = pd.concat(_res)
+        res.to_csv(output_prefix + "chi2_independence.csv", index=False)
+
+        # # Plot
+        res = pd.read_csv(output_prefix + "chi2_independence.csv")
+        p = res.query("contrast == 'WHO_score_sample' & test == 'log-likelihood'").sort_values(
+            "pval"
+        )
+        p = p.rename(
+            columns={
+                "attribute_item": "Variable",
+                "cramer": "hedges",
+                "pval": "p-unc",
+                "qval": "p-cor",
+            }
+        )
+        p = p.groupby("Variable").mean().reset_index()
+        fig = volcano_plot(
+            p.assign(A="Healthy", B="High COVID-19 severity"),
+            diff_threshold=None,
+            n_top=15,
+            invert_direction=False,
+        )
+        fig.savefig(output_prefix + "chi2_independence.volcano_plot.svg", **figkws)
 
 
 def enrich_categorical(
