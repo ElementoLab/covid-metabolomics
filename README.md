@@ -5,9 +5,9 @@
 
 ## Organization
 
+- The [data](data) directory contains the assay data (NMR).
 - The [metadata](metadata) directory contains metadata relevant to annotate the samples.
 - The [src](src) directory contains source code used to analyze the data.
-- Raw data will be under the `data` directory.
 - Outputs from the analysis will be present in a `results` directory, with subfolders pertaining to each part of the analysis as described below.
 
 
