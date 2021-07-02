@@ -1,4 +1,7 @@
 pandas
+pyarrow
+fastparquet
+h5py
 sklearn
 umap
 statsmodels
@@ -10,6 +13,7 @@ pymde
 pyreadr
 pdfplumber
 urlpath
+pyrcca
 
 git+https://github.com/ElementoLab/imc.git
 git+https://github.com/afrendeiro/seaborn_extensions.git

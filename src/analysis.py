@@ -981,23 +981,23 @@ def get_feature_network(x: DataFrame, y: DataFrame, data_type: str = "NMR") -> D
     fig.savefig(output_dir / "feature_annotation.network.scanpy.only_lipoproteins.svg", **figkws)
     plt.close(fig)
 
-    import ringity
-    import networkx as nx
+    # import ringity
+    # import networkx as nx
 
-    G = nx.from_scipy_sparse_matrix(a.obsp["connectivities"])
-    dgm = ringity.diagram(G)
-    dgm.score
+    # G = nx.from_scipy_sparse_matrix(a.obsp["connectivities"])
+    # dgm = ringity.diagram(G)
+    # dgm.score
 
-    fig = plt.figure(constrained_layout=False)
-    gs = fig.add_gridspec(nrows=3, ncols=3, left=0.05, right=0.48, wspace=0.05)
-    ax1 = fig.add_subplot(gs[:-1, :])
-    ax2 = fig.add_subplot(gs[-1, :-1])
-    ax3 = fig.add_subplot(gs[-1, -1])
-    ringity.plots.plot_nx(G, ax=ax1)
-    ringity.plots.plot_seq(dgm, ax=ax2)
-    ringity.plots.plot_dgm(dgm, ax=ax3)
-    fig.savefig(output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws)
-    plt.close(fig)
+    # fig = plt.figure(constrained_layout=False)
+    # gs = fig.add_gridspec(nrows=3, ncols=3, left=0.05, right=0.48, wspace=0.05)
+    # ax1 = fig.add_subplot(gs[:-1, :])
+    # ax2 = fig.add_subplot(gs[-1, :-1])
+    # ax3 = fig.add_subplot(gs[-1, -1])
+    # ringity.plots.plot_nx(G, ax=ax1)
+    # ringity.plots.plot_seq(dgm, ax=ax2)
+    # ringity.plots.plot_dgm(dgm, ax=ax3)
+    # fig.savefig(output_dir / "feature_annotation.network.scanpy.ringity_analysis.svg", **figkws)
+    # plt.close(fig)
 
     # Check the same on steady state only
     xx = x.loc[y.query("group == 'control'").index]
@@ -2325,20 +2325,28 @@ def cross_data_type_predictions() -> None:
     Integrate the two data types on common ground
     """
     import sklearn
+    from sklearn.model_selection import RandomizedSearchCV
+    from sklearn.utils.fixes import loguniform
 
     output_dir = results_dir / "nmr_flow_predictions"
     output_dir.mkdir()
 
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
-    x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
+    x1, x2, _ = get_matched_nmr_and_flow(x1, y1, x2, y2)
     xz1 = z_score(x1)
     xz2 = z_score(x2)
 
     model = sklearn.linear_model.Ridge()
-    model.fit(xz1, xz2)
+    n_iter_search = 1000
+    param_dist = dict(alpha=loguniform(1e-20, 1e0))
+    random_search = RandomizedSearchCV(model, param_distributions=param_dist, n_iter=n_iter_search)
+    random_search.fit(xz1, xz2)
 
-    coefs = pd.DataFrame(model.coef_, index=xz2.columns, columns=xz1.columns)
+    random_search.best_estimator_.alpha  # 0.99453942356375
+    coefs = pd.DataFrame(
+        random_search.best_estimator_.coef_, index=xz2.columns, columns=xz1.columns
+    )
     coefs = coefs.rename_axis(index="Immune populations", columns="Metabolites")
     coefs = coefs.loc[coefs.sum(1) > 0, :]
     coefs = coefs.loc[:, coefs.sum(0) > 0]
@@ -2372,6 +2380,7 @@ def cross_data_type_predictions() -> None:
         yticklabels=True,
         cbar_kws=dict(label=r"Coefficient ($\beta$)"),
         rasterized=True,
+        metric="correlation",
     )
     grid.savefig(
         output_dir / "coefficients.top_variables.clustermap.svg",
@@ -2381,6 +2390,8 @@ def cross_data_type_predictions() -> None:
 
 
 def _load_model(model, filename):
+    import h5py
+
     h5 = h5py.File(filename, "r")
     for key, value in h5.attrs.items():
         setattr(model, key, value)
@@ -2463,7 +2474,7 @@ def integrate_nmr_flow() -> None:
     x1_cca = pd.DataFrame(ccaCV.comps[0], index=x1.index)
     x2_cca = pd.DataFrame(ccaCV.comps[1], index=x2.index)
 
-    o = output_dir / f"rCCA_integration.CV.{n_comp}.{reg}"
+    o = output_dir / f"rCCA_integration.CV.{n_comp}-{reg:.3f}"
     metrics, anndata = assess_integration(
         a=x1_cca,
         b=x2_cca,
@@ -2896,7 +2907,7 @@ def assess_integration(
             )
 
             s = scores_df.query(f"projection == '{algo}'")[attr]
-            s = "; ".join([f"{k}: {v:.3e}" for k, v in s.items()])
+            s = "\n".join([f"{k}: {v:.3e}" for k, v in s.items()])
             ax.set(
                 title=f"{attr}\n{s}",
                 xlabel=algo.upper() + "1",
@@ -2907,10 +2918,11 @@ def assess_integration(
     plt.close(fig)
 
     fig, axes = plt.subplots(1, len(attributes), figsize=(3 * len(attributes), 1))
+    # TODO: assure ordering is not lost, by using categories
     for j, (ax, attr) in enumerate(zip(axes, attributes)):
-        cmap = sns.color_palette(cmaps[j], len(adata.obs[attr].cat.categories) + 1)
-        for i, s in enumerate(adata.obs[attr].cat.categories):
-            p = adata.obs.query(f"{attr} == '{s}'")
+        cmap = sns.color_palette(cmaps[j], len(adata.obs[attr].unique()) + 1)
+        for i, s in enumerate(adata.obs[attr].unique()):
+            p = adata.obs.loc[adata.obs[attr] == s]
             p = adata[p.index].obsm["X_cca"][:, 0]
             sns.kdeplot(p, color=cmap[i], ax=ax, cumulative=True)
             ax.text(p.mean(), 0.5, s=s, color=cmap[i])
@@ -2925,7 +2937,8 @@ def predict_outcomes() -> None:
     from sklearn.preprocessing import StandardScaler
     from sklearn.feature_selection import SelectKBest, mutual_info_classif
     from sklearn.linear_model import LogisticRegression, ElasticNet
-    from sklearn.tree import DecisionTreeClassifier
+
+    # from sklearn.tree import DecisionTreeClassifier
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.svm import LinearSVC, NuSVC
     from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
@@ -3004,8 +3017,8 @@ def predict_outcomes() -> None:
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
-    xz1 = z_score(x1)
-    xz2 = z_score(x2)
+    # xz1 = z_score(x1)
+    # xz2 = z_score(x2)
 
     y["first_sample"] = 0
     for pat in y["patient_code"].unique():
@@ -3027,8 +3040,8 @@ def predict_outcomes() -> None:
     target = m["patient_severity"].cat.remove_unused_categories().cat.codes
 
     # Align
-    xz1 = xz1.reindex(target.index)
-    xz2 = xz2.reindex(target.index)
+    x1 = x1.reindex(target.index)
+    x2 = x2.reindex(target.index)
 
     # # For the other classifiers
     N = 100
@@ -3053,16 +3066,23 @@ def predict_outcomes() -> None:
     ]
 
     for model in insts:
-        for label, k in predict_options:
-            # for dtype, X in [("combined", xz1.join(xz2))]:
-            for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
-                name = str(type(model())).split(".")[-1][:-2]
+        for dtype, X in [("NMR", x1), ("flow_cytometry", x2), ("combined", x1.join(x2))]:
+            for label, k in predict_options if dtype == "combined" else [predict_options[0]]:
+                name = str(type(model())).rsplit(".", maxsplit=1)[-1][:-2]
+
+                o = (
+                    output_dir
+                    / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.scores.csv"
+                )
+                if o.exists():
+                    continue
                 print(name, label, dtype)
 
                 # Fit
                 res = Parallel(n_jobs=-1)(
                     delayed(fit)(i, model=model, X=X, y=target, k=k) for i in range(N)
                 )
+
                 # Get ROC_AUC scores
                 scores = pd.DataFrame(
                     np.asarray([r[:-2] for r in res]),
@@ -3075,8 +3095,7 @@ def predict_outcomes() -> None:
                 ).rename_axis(index="iteration")
                 scores.to_csv(
                     output_dir
-                    # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv"
-                    / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv"
+                    / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.scores.csv"
                 )
                 # Get coefficients/variable ranks
                 real_coefs = pd.DataFrame([r[-2] for r in res])
@@ -3089,15 +3108,17 @@ def predict_outcomes() -> None:
                 )
                 coefs.to_csv(
                     output_dir
-                    # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv"
-                    / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv"
+                    / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.coefs.csv"
                 )
+
+    xz1 = z_score(x1)
+    xz2 = z_score(x2)
 
     for model in insts:
         # Only with full model
         label = ""
         k = None
-        name = str(type(model())).split(".")[-1][:-2]
+        name = str(type(model())).rsplit(".", maxsplit=1)[-1][:-2]
         _res = list()
         for dtype, X in [("NMR", xz1), ("flow_cytometry", xz2), ("combined", xz1.join(xz2))]:
             scores = pd.read_csv(
