@@ -3,10 +3,13 @@ sklearn
 umap
 statsmodels
 pingouin
-numpy
+numpy>=1.20
 seaborn
 matplotlib
 pymde
+pyreadr
+pdfplumber
+urlpath
 
 git+https://github.com/ElementoLab/imc.git
 git+https://github.com/afrendeiro/seaborn_extensions.git

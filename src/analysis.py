@@ -802,7 +802,7 @@ def plot_nmr_feature_annotations() -> None:
 
 def get_feature_network_knn(x: DataFrame, k: int = 15, **kwargs) -> DataFrame:
     from umap.umap_ import nearest_neighbors
-    from scanpy.neighbors import Neighbors, _compute_connectivities_umap
+    from scanpy.neighbors import _compute_connectivities_umap
 
     kws = dict(
         metric="euclidean",
@@ -1601,8 +1601,9 @@ def supervised_joint(
         s=5,
         alpha=0.5,
     )
+    _s = pg.corr(c["GLM"], c["MLM"]).squeeze()
     ax.set(
-        title=attribute,
+        title=attribute + f"; r = {_s['r']:.3f}",
         xlabel=r"$\beta$   (GLM)",
         ylabel=r"$\beta$   (MLM)",
     )
@@ -2263,16 +2264,16 @@ def var_to_dict(var: DataFrame) -> tp.Dict:
     return gsl
 
 
-def page(parameter_vector: Series, gene_set_libraries: tp.Dict) -> DataFrame:
+def page(coefficient_vector: Series, gene_set_libraries: tp.Dict) -> DataFrame:
     from scipy import stats
 
     results = dict()
     for lib in gene_set_libraries:
         for gs, genes in gene_set_libraries[lib].items():
-            μ = parameter_vector.mean()
-            δ = parameter_vector.std()
-            Sm = parameter_vector.reindex(genes).mean()
-            m = parameter_vector.shape[0]
+            μ = coefficient_vector.mean()
+            δ = coefficient_vector.std()
+            Sm = coefficient_vector.reindex(genes).mean()
+            m = coefficient_vector.shape[0]
             # Get Z-scores
             Z = (Sm - μ) * (m ** (1 / 2)) / δ
             # Get P-values
