@@ -48,6 +48,8 @@ def main(cli: tp.Sequence[str] = None) -> int:
     unsupervised(x1, y1, attributes, data_type="NMR")
 
     get_explanatory_variables(x1, y1, "NMR")
+    latent_association(x1, y1, data_type="NMR")
+    risk_association(x1, y1, data_type="NMR")
 
     overlay_individuals_over_global(x1, y1, data_type="NMR")
 
@@ -1239,6 +1241,168 @@ def feature_properties_pseudotime(x: DataFrame, data_type: str = "NMR") -> None:
     plt.close(fig)
 
 
+def latent_association(
+    x: DataFrame,
+    y: DataFrame,
+    data_type: str = "NMR",
+    suffix: str = "",
+    attributes: tp.Sequence[str] = [],
+):
+    """
+    Rank variables by association with latent space
+    """
+    from sklearn.manifold import SpectralEmbedding
+    import statsmodels.formula.api as smf
+
+    output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
+    output_prefix = output_dir / "unsupervised.variable_association_SpectralEmbedding."
+
+    xz = z_score(x)
+
+    lat = pd.DataFrame(
+        SpectralEmbedding().fit_transform(xz),
+        index=x.index,
+        columns=["SE1", "SE2"],
+    )
+    _res_glm = list()
+    for attr in tqdm(attributes, desc="feature", position=1):
+        if y[attr].dtype == "category":
+            s = y[attr].cat.codes.rename(attr)
+        elif y[attr].dtype == "Int64":
+            s = y[attr].astype(float).rename(attr)
+        else:
+            s = y[attr]
+        mdf = smf.glm(f"{attr} ~ SE1 * SE2", lat.join(s).dropna()).fit()
+        res = (
+            mdf.params.to_frame("coefs")
+            .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+            .join(mdf.pvalues.rename("pvalues"))
+            .assign(feature=attr)
+        )
+        # res = res.loc[res.index.str.contains(attr)]
+        _res_glm.append(res)
+    res_glm = pd.concat(_res_glm)
+    res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+    p = res_glm.drop("Intercept").groupby("feature")["qvalues"].min()
+    p = (-np.log10(p)).sort_values(ascending=False)
+
+    fig, ax = plt.subplots(1, 1, figsize=(4, 2))
+    sns.barplot(x=p, y=p.index.str.replace("_", " "), color=sns.color_palette("tab10")[0], ax=ax)
+    ax.axvline(-np.log10(0.05), color="grey", linestyle="--")
+    ax.axvline(-np.log10(0.01), color="grey", linestyle="--")
+    ax.set(xlabel="Association with latent space (-log10(p-value))", ylabel="Variables")
+    fig.savefig(output_prefix + "value_vs_rank.svg", bbox_inches="tight")
+
+
+def risk_association(
+    x: DataFrame,
+    y: DataFrame,
+    data_type: str = "NMR",
+    suffix: str = "",
+    attributes: tp.Sequence[str] = ["WHO_score_sample", "hospitalized", "intubated", "death"],
+):
+    """
+    Rank variables by association with latent space
+    """
+    from sklearn.manifold import SpectralEmbedding
+    import scipy
+
+    output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
+    output_prefix = output_dir / "unsupervised.risk_association_SpectralEmbedding."
+
+    xz = z_score(x)
+    y["death"] = pd.Categorical(y["alive"] == "dead", ordered=True)
+    palettes["death"] = palettes["alive"]
+
+    lat = pd.DataFrame(
+        SpectralEmbedding().fit_transform(xz),
+        index=x.index,
+        columns=["SE1", "SE2"],
+    )
+
+    # Project a weighted kernel density back into the PCA space
+    lat_pheno = lat.join(y[["WHO_score_sample"]])
+
+    (xmin, ymin), (xmax, ymax) = (lat.min(), lat.max())
+
+    c = len(attributes)
+    _spaces = list()
+    fig, axes = plt.subplots(c + 3, 3, figsize=(4 * 3, 3 * (c + 3)))
+    for i, attribute in enumerate(attributes):
+        axes[i][0].set(ylabel=attribute)
+        m1, m2, d = lat.join(y[attribute]).dropna().astype(float).T.values
+
+        X, Y = np.mgrid[xmin:xmax:200j, ymin:ymax:200j]
+        positions = np.vstack([X.ravel(), Y.ravel()])
+        values = np.vstack([m1, m2])
+        kernel1 = scipy.stats.gaussian_kde(values, weights=d)
+        kernel2 = scipy.stats.gaussian_kde(values)
+        Z1 = np.reshape(kernel1(positions).T, X.shape)
+        Z2 = np.reshape(kernel2(positions).T, X.shape)
+        _spaces.append([Z1, Z2, Z1 - Z2])
+
+        v = pd.DataFrame(Z1 - Z2).abs().stack().max()
+        v += v * 0.1
+        for ax, z, cmap, kw in zip(
+            axes[i],
+            [Z1, Z2, Z1 - Z2],
+            ["gist_stern_r", "gist_stern_r", "PuOr_r"],
+            [{}, {}, {"vmin": -v, "vmax": v}],
+        ):
+            r = ax.imshow(
+                np.rot90(z),
+                cmap=cmap,
+                extent=[xmin, xmax, ymin, ymax],
+                rasterized=True,
+                **kw,
+            )
+            ax.axhline(0, linestyle="--", color="grey")
+            ax.axvline(0, linestyle="--", color="grey")
+            for i, pheno in enumerate(y[attribute].cat.categories):
+                p = lat.loc[y[attribute] == pheno, ["SE1", "SE2"]]
+                ax.scatter(*p.T.values, s=2, color=palettes[attribute][i])
+            ax.set(xlim=(xmin, xmax), ylim=(ymin, ymax), aspect="auto")
+            fig.colorbar(r, ax=ax)
+
+        for ax, label in zip(axes[0], ["Weighted kernel", "Unweighted kernel", "Difference"]):
+            ax.set_title(label)
+
+    spaces = np.asarray(_spaces)
+    spaces_mean = spaces.mean(0)
+    spaces_sum = spaces.sum(0)
+    spaces_abs_max = np.zeros((3, 200, 200))
+
+    intercept = np.ones((4, 200, 200)).astype(bool)  # just for shape fitting
+    for i in range(3):
+        mask = intercept & (spaces_mean[i, :] > 0)
+        q = np.ma.masked_array(spaces[:, i, :], mask=mask).max(0)
+        q[q.mask] = 0
+        spaces_abs_max[i] += np.asarray(q)
+        mask = intercept & (spaces_mean[i, :] < 0)
+        q = np.ma.masked_array(spaces[:, i, :], mask=mask).min(0)
+        q[q.mask] = 0
+        spaces_abs_max[i] += np.asarray(q)
+
+    for j, (spac, label) in enumerate(
+        [(spaces_mean, "Mean"), (spaces_sum, "Sum"), (spaces_abs_max, "Signed max")], 1
+    ):
+        for i, cmap in enumerate(["gist_stern_r", "gist_stern_r", "PuOr_r"]):
+            ax = axes[-j][i]
+            r = ax.imshow(
+                np.rot90(spac[i]), cmap=cmap, extent=[xmin, xmax, ymin, ymax], rasterized=True
+            )
+            ax.axhline(0, linestyle="--", color="grey")
+            ax.axvline(0, linestyle="--", color="grey")
+            ax.set(aspect="auto")
+            fig.colorbar(r, ax=ax)
+        axes[-j][0].set(ylabel=label)
+    fig.savefig(
+        output_prefix + "weighted_kde.svg",
+        **figkws,
+    )
+
+
 # def diffusion(x, y) -> None:
 
 #     a = AnnData(x, obs=y)
@@ -1865,7 +2029,9 @@ def supervised_temporal(
         res = res.rename_axis(index="contrast")
         res.to_csv(stats_f)
 
-    fig, axes = plt.subplots(1, 4, figsize=(4 * 3, 3))
+    res = pd.read_csv(stats_f, index_col=0)
+
+    fig, axes = plt.subplots(1, 3, figsize=(3 * 4 + (1 / 3) * 4, 4))
     q = y[test_vars].dropna()
     axes[0].scatter(*q.values.T, alpha=0.5)
     axes[0].set(xlabel=test_vars[0], ylabel=test_vars[1])
@@ -1875,14 +2041,6 @@ def supervised_temporal(
     axes[1].scatter(q1, q2, alpha=0.5)
     axes[1].set(xlabel=f"Coefficient {test_vars[0]}", ylabel=f"Coefficient {test_vars[1]}")
 
-    q1 = res.loc["WHO_score_sample"].set_index("feature")["coefs"]
-    q2 = res.loc[test_vars[1]].set_index("feature")["coefs"]
-    axes[2].scatter(q1, q2, alpha=0.5)
-    sns.regplot(x=q1, y=q2, ax=axes[2], color="grey", scatter=False)
-    axes[2].set(xlabel=f"Coefficient WHO_score_sample", ylabel=f"Coefficient {test_vars[1]}")
-    stat = pg.corr(q1, q2).squeeze()
-    axes[2].set(title=f"r = {stat['r']:.3f}; p = {stat['p-val']:.3e}")
-
     q1 = (
         pd.read_csv(output_dir / "supervised.joint_model.model_fits.csv", index_col=0)
         .loc["WHO_score_sample"]
@@ -1891,15 +2049,35 @@ def supervised_temporal(
         .reindex(q2.index)
     )
     q2 = res.loc[test_vars[1]].set_index("feature")["coefs"]
-    axes[3].scatter(q1, q2, alpha=0.5)
-    axes[3].axhline(0, linestyle="--", color="grey")
-    axes[3].axvline(0, linestyle="--", color="grey")
-    sns.regplot(x=q1, y=q2, ax=axes[3], color="grey", scatter=False)
-    axes[3].set(
-        xlabel=f"Coefficient WHO_score_sample joint model", ylabel=f"Coefficient {test_vars[1]}"
+    var_annot = get_nmr_feature_annotations()
+    class_colors = dict(zip(var_annot["group"].unique(), sns.color_palette("tab20")))
+    _corrs = list()
+    for class_, color in class_colors.items():
+        sel = var_annot.query(f"group == '{class_}'").index
+        axes[2].scatter(q1.loc[sel], q2.loc[sel], alpha=0.5, color=color)
+        if sel.shape[0] > 2:
+            r = pg.corr(q1.loc[sel], q2.loc[sel]).squeeze()["r"]
+            _corrs.append([class_, r, sel.shape[0]])
+            sns.regplot(
+                x=q1.loc[sel],
+                y=q2.loc[sel],
+                ax=axes[2],
+                ci=None,
+                color=color,
+                scatter=False,
+                line_kws=dict(alpha=0.25),
+            )
+    axes[2].axhline(0, linestyle="--", color="grey")
+    axes[2].axvline(0, linestyle="--", color="grey")
+    sns.regplot(x=q1, y=q2, ax=axes[2], color="black", scatter=False)
+    axes[2].set(
+        xlim=(-0.3, 0.3),
+        ylim=(-0.3, 0.3),
+        xlabel=f"Coefficient WHO_score_sample joint model",
+        ylabel=f"Coefficient {test_vars[1]}",
     )
     stat = pg.corr(q1, q2).squeeze()
-    axes[3].set(title=f"r = {stat['r']:.3f}; p = {stat['p-val']:.3e}")
+    axes[2].set(title=f"r = {stat['r']:.3f}; p = {stat['p-val']:.3e}")
     fig.savefig(
         output_dir / "supervised.temporal.tosilizumab.model_assessment_comparison.svg",
         **figkws,
@@ -2326,13 +2504,16 @@ def cross_data_type_predictions() -> None:
     """
     import sklearn
     from sklearn.model_selection import RandomizedSearchCV
-    from sklearn.utils.fixes import loguniform
+    from scipy.stats import loguniform
 
     output_dir = results_dir / "nmr_flow_predictions"
     output_dir.mkdir()
 
+    x2_vars = pd.read_csv(metadata_dir / "flow_cytometry_variables.non_redundant.csv", squeeze=True)
+
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
+    x2 = x2[x2_vars]
     x1, x2, _ = get_matched_nmr_and_flow(x1, y1, x2, y2)
     xz1 = z_score(x1)
     xz2 = z_score(x2)
@@ -2343,13 +2524,11 @@ def cross_data_type_predictions() -> None:
     random_search = RandomizedSearchCV(model, param_distributions=param_dist, n_iter=n_iter_search)
     random_search.fit(xz1, xz2)
 
-    random_search.best_estimator_.alpha  # 0.99453942356375
+    random_search.best_estimator_.alpha  # 0.9791961541798857
     coefs = pd.DataFrame(
         random_search.best_estimator_.coef_, index=xz2.columns, columns=xz1.columns
     )
     coefs = coefs.rename_axis(index="Immune populations", columns="Metabolites")
-    coefs = coefs.loc[coefs.sum(1) > 0, :]
-    coefs = coefs.loc[:, coefs.sum(0) > 0]
 
     grid = clustermap(
         coefs,
@@ -2371,6 +2550,8 @@ def cross_data_type_predictions() -> None:
     x1var = (coefs.abs().sum(0)).sort_values()
     x2var = (coefs.abs().sum(1)).sort_values()
 
+    # d = pairwise_string_distances(x2var.index)
+
     n = 30
     grid = clustermap(
         coefs.loc[x2var.index[-n:], x1var.index[-n:]],
@@ -2387,6 +2568,23 @@ def cross_data_type_predictions() -> None:
         **figkws,
     )
     plt.close(grid.fig)
+
+
+def pairwise_string_distances(strings: tp.Sequence[str]) -> DataFrame:
+    from scipy.spatial.distance import hamming
+
+    dists = pd.DataFrame(index=strings, columns=strings, dtype=float)
+    for s1 in strings:
+        for s2 in strings:
+            a, b = list(s1), list(s2)
+            if len(a) != len(b):
+                d = abs(len(a) - len(b))
+                if len(a) < len(b):
+                    a += [" "] * d
+                else:
+                    b += [" "] * d
+            dists.loc[s1, s2] = hamming(a, b)
+    return dists
 
 
 def _load_model(model, filename):
@@ -2931,7 +3129,7 @@ def assess_integration(
     return to_return
 
 
-def predict_outcomes() -> None:
+def predict_outcomes(overwrite: bool = False) -> None:
     from joblib import Parallel, delayed
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
@@ -3014,8 +3212,11 @@ def predict_outcomes() -> None:
     output_dir = results_dir / "predict"
     output_dir.mkdir()
 
+    x2_vars = pd.read_csv(metadata_dir / "flow_cytometry_variables.non_redundant.csv", squeeze=True)
+
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
+    x2 = x2[x2_vars]
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
     # xz1 = z_score(x1)
     # xz2 = z_score(x2)
@@ -3043,7 +3244,7 @@ def predict_outcomes() -> None:
     x1 = x1.reindex(target.index)
     x2 = x2.reindex(target.index)
 
-    # # For the other classifiers
+    # Train
     N = 100
 
     insts = [
@@ -3074,7 +3275,7 @@ def predict_outcomes() -> None:
                     output_dir
                     / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.scores.csv"
                 )
-                if o.exists():
+                if o.exists() and not overwrite:
                     continue
                 print(name, label, dtype)
 
@@ -3124,7 +3325,7 @@ def predict_outcomes() -> None:
             scores = pd.read_csv(
                 output_dir
                 # / f"severe-mild_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
-                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
+                / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.scores.csv",
                 index_col=0,
             )
             p = scores.loc[:, scores.columns.str.contains("test")].melt()
@@ -3142,7 +3343,7 @@ def predict_outcomes() -> None:
         fig.savefig(
             output_dir
             # / f"severe-mild_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.svg",
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.scores.svg",
             **figkws,
         )
 
@@ -3156,7 +3357,7 @@ def predict_outcomes() -> None:
         fig.savefig(
             output_dir
             # / f"severe-mild_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.scores.only_real.svg",
             **figkws,
         )
 
@@ -3165,7 +3366,7 @@ def predict_outcomes() -> None:
         for label, k in predict_options:
             p = pd.read_csv(
                 output_dir
-                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.scores.csv",
+                / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.scores.csv",
                 index_col=0,
             )
             p = p.loc[:, p.columns.str.contains("test")].melt()
@@ -3176,7 +3377,7 @@ def predict_outcomes() -> None:
         fig, stats = swarmboxenplot(data=perf, x="variable", y="value", hue="n_features")
         fig.savefig(
             output_dir
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.svg",
             **figkws,
         )
 
@@ -3185,7 +3386,7 @@ def predict_outcomes() -> None:
         )
         fig.savefig(
             output_dir
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.only_real.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.scores.decreasing_n_variables.only_real.svg",
             **figkws,
         )
 
@@ -3194,7 +3395,7 @@ def predict_outcomes() -> None:
         for label, k in predict_options:
             c = pd.read_csv(
                 output_dir
-                / f"severity_scale_prediction.first_sample_only.{dtype}.{name}{label}.coefs.csv",
+                / f"severity_scale_prediction.first_sample_only.no_Z.{dtype}.{name}{label}.coefs.csv",
                 index_col=0,
             )
             c2 = (c.T.drop("type") / c.sum(1)).T
@@ -3219,24 +3420,99 @@ def predict_outcomes() -> None:
         axes[1].set(yscale="log")
         fig.savefig(
             output_dir
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.svg",
             **figkws,
         )
 
         rr = r.tail(20)
-        fig, ax = plt.subplots(1, 1, figsize=(2 * 4.2, 4))
+        fig, ax = plt.subplots(1, 1, figsize=(2 * 3.2, 3))
         rank = rr["real"].rank(ascending=False)
-        ax.scatter(rank, rr["real"], s=5)
+        ax.scatter(rank, rr["real"], s=5, c=rr.index.isin(x1.columns), cmap="Pastel1")
         for idx in rr.index:
             ax.text(rank[idx], rr.loc[idx, "real"], s=idx, rotation=90, ha="right", va="top")
         ax.set(xlabel="Importance (rank)", ylabel="Importance", yscale="log")
         fig.savefig(
             output_dir
-            / f"severity_scale_prediction.first_sample_only.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.top_20.svg",
+            / f"severity_scale_prediction.first_sample_only.no_Z.performance_data_type_comparison.{name}{label}.variable_importance.rank_vs_score.top_20.svg",
             **figkws,
         )
 
         # Use this score to relate to clinical parameters
+
+
+# def _disambiguate_flow_variables(x2):
+#     cols = x2.columns.str.extract("(.*)/(.*)")
+#     cols.index = x2.columns
+#     cols.columns = ["child_population", "parent_population"]
+
+#     # cols.loc[cols.index.str.contains(r"_{1}"), 'child_population'] = cols.loc[cols.index.str.contains(r"_{1}"), 'child_population'].str.replace("_", "/", regex=False)
+#     cols.loc[cols.index.str.contains(r"_{2}"), "child_population"] = cols.loc[
+#         cols.index.str.contains(r"_{2}"), "child_population"
+#     ].str.replace("__", "_/", regex=False)
+
+#     sel_vars = list()
+#     exc_vars = list()
+#     for idx, row in cols.iterrows():
+#         name = row.name
+#         if name == "CD4+_CD8+/CD3+":
+#             sel_vars.append(name)
+#         elif (row["child_population"] in cols.index) or (
+#             row["child_population"].replace("_", "/") in cols.index
+#         ):
+#             exc_vars.append(name)
+#         else:
+#             sel_vars.append(name)
+
+#     cols = cols.loc[set(sel_vars)].sort_index()
+#     parent_preference_order = pd.Series(
+#         range(13),
+#         index=[
+#             "CD45RA+_CD4+",
+#             "CD45RA+_CD8+",
+#             "CD45RO+_CD4+",
+#             "CD45RO+_CD8+",
+#             "CD4+",
+#             "CD8+",
+#             "CD185+",
+#             "CD56+_CD16_Br",
+#             "CD3+",
+#             "LY",
+#             "All_CD45",
+#             "All_CD45_(PBMC)",
+#             "All_CD45_(WBC)",
+#         ],
+#     )
+
+#     # group = pd.Index(['CD158i/CD56+_CD16_Br', 'CD158i/LY'])
+#     # group = pd.Index(["CD158b/CD56+_CD16_Br", "CD158b/LY"])
+#     group = pd.Index(
+#         [
+#             "CD62L+_CD197+_/CD45RA+_CD8+",
+#             "CD62L+_CD197+_/CD45RO+_CD4+",
+#             "CD62L+_CD197+_/CD45RO+_CD8+",
+#         ]
+#     )
+
+#     # gr = cols.loc[~cols['child_population'].str.contains("_")].groupby('child_population').groups
+#     gr = cols.loc[~cols['child_population'].str.count("_") < 2].groupby('child_population').groups
+#     # gr = cols.groupby("child_population").groups
+#     for idx, group in gr.items():
+#         print(idx, len(group))
+#         if len(group) == 1:
+#             sel_vars += group.tolist()
+#             continue
+#         parents = cols.loc[group, "parent_population"]
+#         sel = parent_preference_order.reindex(parents.values)
+#         sel_f = group[group.str.endswith(sel.idxmin())]
+#         assert sel_f.shape[0] == 1
+#         sel_vars += sel_f.tolist()
+#         exc_vars += group[~group.isin(sel_f)].tolist()
+
+#     sel_vars = [x for x in sel_vars if x not in exc_vars]
+#     cols = cols.loc[set(sel_vars)].sort_index()
+
+#     pd.Series(sorted(set(sel_vars))).to_csv("selected.csv")
+#     pd.Series(sorted(set(exc_vars))).to_csv("excluded.csv")
 
 
 if __name__ == "__main__" and "get_ipython" not in locals():
