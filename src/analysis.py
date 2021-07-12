@@ -50,6 +50,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
     get_explanatory_variables(x1, y1, "NMR")
     latent_association(x1, y1, data_type="NMR")
     risk_association(x1, y1, data_type="NMR")
+    speed_association(y1, data_type="NMR")
 
     overlay_individuals_over_global(x1, y1, data_type="NMR")
 
@@ -1322,8 +1323,6 @@ def risk_association(
     )
 
     # Project a weighted kernel density back into the PCA space
-    lat_pheno = lat.join(y[["WHO_score_sample"]])
-
     (xmin, ymin), (xmax, ymax) = (lat.min(), lat.max())
 
     c = len(attributes)
@@ -1401,6 +1400,92 @@ def risk_association(
         output_prefix + "weighted_kde.svg",
         **figkws,
     )
+
+
+def speed_association(
+    y: DataFrame,
+    data_type: str = "NMR",
+    suffix: str = "",
+    attributes: tp.Sequence[str] = [
+        "age",
+        "sex",
+        "obesity",
+        "bmi",
+        "hospitalized",
+        "intubated",
+        "alive",
+        "patient_group",
+    ],
+    method: str = "SpectralEmbedding",
+):
+    import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+
+    output_prefix = (
+        results_dir
+        / f"unsupervised_{data_type}"
+        / "unsupervised.all_methods.patient_walk_in_space.speed_association."
+    )
+    summary_f = (
+        results_dir
+        / f"unsupervised_{data_type}"
+        / "unsupervised.all_methods.patient_walk_in_space.metrics.csv"
+    )
+    summary = pd.read_csv(summary_f).query(f"method == '{method}'")
+
+    target = summary.set_index("patient_code")[["velo"]]
+
+    # group values by patient
+    yy = pd.DataFrame(
+        [
+            y.groupby("patient_code")[attr]
+            .unique()
+            .apply(lambda x: x[0] if len(x) == 1 else np.nan)
+            for attr in attributes
+        ]
+    ).T
+    # fix types
+    for attr in yy.columns:
+        if y[attr].dtype == "float":
+            yy[attr] = yy[attr].astype(float)
+
+    _res_glm = list()
+    family = sm.families.Gamma(link=sm.families.links.log())
+    for attr in tqdm(attributes, desc="feature", position=1):
+        if yy[attr].dtype == "category":
+            s = yy[attr].cat.codes.rename(attr)
+        elif yy[attr].dtype == "Int64":
+            s = yy[attr].astype(float).rename(attr)
+        else:
+            s = yy[attr]
+        mdf = smf.glm(f"velo ~ {attr}", target.join(s).dropna(), family=family).fit()
+        res = (
+            mdf.params.to_frame("coefs")
+            .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+            .join(mdf.pvalues.rename("pvalues"))
+            .assign(feature=attr)
+        )
+        # res = res.loc[res.index.str.contains(attr)]
+        _res_glm.append(res)
+    res_glm = pd.concat(_res_glm)
+    res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+    res_glm.sort_values("pvalues").to_csv(output_prefix + "stats.csv")
+
+    from seaborn_extensions import volcano_plot
+
+    data = (
+        res_glm.drop("Intercept")
+        .rename(columns={"coefs": "hedges", "pvalues": "p-unc", "qvalues": "p-cor"})
+        .assign(A="Lower speed", B="Higher speed")
+        .rename_axis(index="Variable")
+        .reset_index()
+    )
+    data["hedges"] *= -1
+    fig = volcano_plot(data, n_top=data.shape[0], diff_threshold=None)
+    fig.axes[0].axhline(-np.log10(0.05), color="grey", linestyle="--")
+    fig.axes[0].set(xlabel="Effect size\n(association with higher speed of metabolome change)")
+    fig.savefig(output_prefix + "volcano_plot.svg", bbox_inches="tight")
 
 
 # def diffusion(x, y) -> None:
