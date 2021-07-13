@@ -72,6 +72,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
     feature_properties_pseudotime(x1)
 
     # Flow cytometry
+    x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
 
@@ -79,12 +80,15 @@ def main(cli: tp.Sequence[str] = None) -> int:
     # overlay_individuals_over_global(x1, y, data_type="NMR", suffix="_strict")
     unsupervised(x2, y, attributes, data_type="flow_cytometry")
     overlay_individuals_over_global(x2, y, data_type="flow_cytometry")
+    supervised_joint(x2, y, attributes, data_type="flow_cytometry", overwrite=True)
 
     # Joint data types
     # # See how variables relate to each other
     cross_data_type_predictions()
+
     # # Develop common latent space
     integrate_nmr_flow()
+
     # # Predict disease severity based on combination of data
     predict_outcomes()
 
@@ -611,15 +615,15 @@ def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
 
 
 def get_flow_feature_annotations(x):
+    import requests
     import json
 
-    projects_dir = Path("~/projects/archive").expanduser()
-    project_dir = projects_dir / "covid-flowcyto"
-
-    var_annot = json.load(open(project_dir / "metadata" / "panel_variables.json"))
+    url = "https://raw.githubusercontent.com/ElementoLab/covid-flowcyto/main/metadata/panel_variables.json"
+    var_annot = json.loads(requests.get(url).content)
     feature_annotation = pd.DataFrame(index=x.columns, columns=var_annot.keys(), dtype=bool)
     for group in var_annot:
         feature_annotation.loc[~feature_annotation.index.isin(var_annot[group]), group] = False
+    feature_annotation["group"] = feature_annotation.idxmax(1)
     return feature_annotation
 
 
@@ -1754,13 +1758,19 @@ def supervised_joint(
     x: DataFrame,
     y: DataFrame,
     attributes: tp.Sequence[str],
+    data_type: str = "NMR",
+    log: bool = False,
+    suffix: str = "",
     plot_all: bool = True,
     overwrite: bool = False,
 ) -> None:
     """A single model of disease severity adjusted for various confounders."""
     import statsmodels.formula.api as smf
 
-    output_dir = (results_dir / "supervised").mkdir()
+    output_dir = (results_dir / f"supervised_{data_type}{suffix}").mkdir()
+
+    if log:
+        x = np.log1p(x)
 
     # # convert ordinal categories to numeric
     for attr in ["WHO_score_sample", "WHO_score_patient"]:
@@ -1776,6 +1786,11 @@ def supervised_joint(
 
     attrs = ["age", "race", "bmi", "WHO_score_sample"]
     model_str = "{} ~ " + " + ".join(attrs)
+
+    repl_ = {"/": "__", "+": "__plus__", "-": "__minus__", "(": "__op__", ")": "__cl__"}
+    if data_type == "flow_cytometry":
+        for k, v in repl_.items():
+            x.columns = x.columns.str.replace(k, v, regex=False)
 
     if not stats_f.exists() or overwrite:
         data = z_score(x).join(y[attrs + ["patient_code"]]).dropna(subset=attrs)
@@ -1812,7 +1827,16 @@ def supervised_joint(
 
         res = pd.concat([res_mlm.assign(model="mlm"), res_glm.assign(model="glm")])
         res = res.rename_axis(index="contrast")
+        if data_type == "flow_cytometry":
+            for k, v in list(repl_.items())[::-1]:
+                res["feature"] = res["feature"].str.replace(v, k, regex=False)
+            res["feature"] = res["feature"].str.replace("/_", "_/", regex=False)
         res.to_csv(stats_f)
+
+    if data_type == "flow_cytometry":
+        for k, v in list(repl_.items())[::-1]:
+            x.columns = x.columns.str.replace(v, k, regex=False)
+        x.columns = x.columns.str.replace("/_", "_/", regex=False)
 
     # Plot
     attribute = "WHO_score_sample"
@@ -1863,7 +1887,8 @@ def supervised_joint(
 
     # Plot all variables as rank vs change plot
     # # check error is symmetric
-    var = get_nmr_feature_annotations().reindex(c.index)
+    var = get_feature_annotations(x, data_type=data_type).reindex(c.index)
+    var["unit"] = "%"
     cat = var["group"].astype(pd.CategoricalDtype())
     cmap = sns.color_palette("tab20")
     score = (-np.log10(res_mlm["qvalues"])) * (res_mlm["coefs"] > 0).astype(int).replace(0, -1)
@@ -1941,7 +1966,6 @@ def supervised_joint(
     alpha = 0.05
     y[attribute] = y[attribute].astype(pd.CategoricalDtype(ordered=True))
     feats = res_mlm.query(f"qvalues < {alpha}").sort_values("pvalues").index
-    var = get_nmr_feature_annotations()
     if y[attribute].dtype.name in ["object", "category"]:
         fig = swarmboxenplot(
             data=x.join(y),
@@ -1954,6 +1978,8 @@ def supervised_joint(
             ax.set(ylabel=var.loc[feat, "unit"])
 
             # Add healthy (UKbb) range
+            if data_type != "NMR":
+                continue
             base = exp.reindex([feat]).squeeze()
             if base.isnull().all():
                 continue
@@ -2583,7 +2609,7 @@ def get_matched_nmr_and_flow(
     return nx1, nx2, ny
 
 
-def cross_data_type_predictions() -> None:
+def cross_data_type_predictions(cv: bool = True) -> None:
     """
     Integrate the two data types on common ground
     """
@@ -2598,22 +2624,50 @@ def cross_data_type_predictions() -> None:
 
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
-    x2 = x2[x2_vars]
+    # x2 = x2[x2_vars]
     x1, x2, _ = get_matched_nmr_and_flow(x1, y1, x2, y2)
-    xz1 = z_score(x1)
-    xz2 = z_score(x2)
+    xz1 = z_score(np.log1p(x1))
+    xz2 = z_score(np.log1p(x2))
 
-    model = sklearn.linear_model.Ridge()
-    n_iter_search = 1000
-    param_dist = dict(alpha=loguniform(1e-20, 1e0))
-    random_search = RandomizedSearchCV(model, param_distributions=param_dist, n_iter=n_iter_search)
-    random_search.fit(xz1, xz2)
-
-    random_search.best_estimator_.alpha  # 0.9791961541798857
-    coefs = pd.DataFrame(
-        random_search.best_estimator_.coef_, index=xz2.columns, columns=xz1.columns
+    stats_f1 = results_dir / "supervised_NMR" / "supervised.joint_model.model_fits.csv"
+    stats1 = pd.read_csv(stats_f1, index_col=0)
+    coefs1 = (
+        stats1.query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+        .rename("NMR_change")
     )
+    stats_f2 = results_dir / "supervised_flow_cytometry" / "supervised.joint_model.model_fits.csv"
+    stats2 = pd.read_csv(stats_f2, index_col=0)
+    coefs2 = (
+        stats2.query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+        .rename("flow_cytometry_change")
+    )
+
+    if cv:
+        model = sklearn.linear_model.ElasticNet()
+        n_iter_search = 100
+        param_dist = dict(alpha=loguniform(1e-20, 1e0), l1_ratio=np.linspace(0, 1, 10))
+        random_search = RandomizedSearchCV(
+            model, param_distributions=param_dist, n_iter=n_iter_search
+        )
+        random_search.fit(xz2, xz1)
+        model = random_search.best_estimator_
+        model.get_params()  # Ridge: 0.9791961541798857;
+        # ElasticNet: alpha=0.9951509654184177, l1_ratio=0.6666666666666666
+    else:
+        # model = sklearn.linear_model.Ridge(alpha=0.9791961541798857)
+        model = sklearn.linear_model.ElasticNet(0.25, 0.6666666666666666)
+        model.fit(xz2, xz1)
+
+    coefs = pd.DataFrame(model.coef_, index=xz1.columns, columns=xz2.columns)
     coefs = coefs.rename_axis(index="Immune populations", columns="Metabolites")
+    t = np.finfo(float).eps
+    t = 0.05
+    coefs = coefs.loc[coefs.abs().sum(1) > t, coefs.abs().sum(0) > t]
+    coefs = coefs.loc[coefs.abs().sum(1) > t, coefs.abs().sum(0) > t]
 
     grid = clustermap(
         coefs,
@@ -2622,6 +2676,13 @@ def cross_data_type_predictions() -> None:
         metric="correlation",
         cbar_kws=dict(label=r"Coefficient ($\beta$)"),
         rasterized=True,
+        row_colors=coefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=coefs2,
+        col_colors_cmaps=["PuOr_r"],
+        xticklabels=True,
+        yticklabels=True,
+        figsize=(14, 22),
     )
     grid.savefig(
         output_dir / "coefficients.all_variables.clustermap.svg",
@@ -2629,8 +2690,85 @@ def cross_data_type_predictions() -> None:
     )
     plt.close(grid.fig)
 
-    x1var = ((coefs.var(0) / coefs.mean(0)) ** 2).sort_values()
-    x2var = ((coefs.var(1) / coefs.mean(1)) ** 2).sort_values()
+    # x1var = ((coefs.var(0) / coefs.mean(0)) ** 2).sort_values()
+    # x2var = ((coefs.var(1) / coefs.mean(1)) ** 2).sort_values()
+    x1var = (coefs.abs().sum(0)).sort_values()
+    x2var = (coefs.abs().sum(1)).sort_values()
+
+    # d = pairwise_string_distances(x2var.index)
+
+    n = 30
+    p = coefs.loc[x2var.index[-n:], x1var.index[-n:]]
+    p = p.loc[p.abs().sum(1) > t, p.abs().sum(0) > t]
+    p = p.loc[p.abs().sum(1) > t, p.abs().sum(0) > t]
+    grid = clustermap(
+        p,
+        center=0,
+        cmap="RdBu_r",
+        xticklabels=True,
+        yticklabels=True,
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+        metric="correlation",
+        row_colors=coefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=coefs2,
+        col_colors_cmaps=["PuOr_r"],
+    )
+    grid.savefig(
+        output_dir / "coefficients.top_variables.clustermap.svg",
+        **figkws,
+    )
+    plt.close(grid.fig)
+
+    coefs = (
+        x1.join(x2)
+        .corr()
+        .loc[coefs1.sort_values().index, coefs2.reindex(x2.columns).sort_values().index]
+    )
+    grid = clustermap(
+        coefs,
+        center=0,
+        cmap="RdBu_r",
+        metric="correlation",
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+        row_colors=coefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=coefs2,
+        col_colors_cmaps=["PuOr_r"],
+        xticklabels=True,
+        yticklabels=True,
+        figsize=(14, 22),
+    )
+    grid.savefig(
+        output_dir / "correlation.all_variables.clustermap.svg",
+        **figkws,
+    )
+    plt.close(grid.fig)
+
+    grid = clustermap(
+        coefs,
+        center=0,
+        cmap="RdBu_r",
+        metric="correlation",
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+        row_colors=coefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=coefs2,
+        col_colors_cmaps=["PuOr_r"],
+        xticklabels=True,
+        yticklabels=True,
+        figsize=(14, 22),
+        row_cluster=False,
+        col_cluster=False,
+    )
+    grid.savefig(
+        output_dir / "correlation.all_variables.clustermap.sorted.svg",
+        **figkws,
+    )
+    plt.close(grid.fig)
 
     x1var = (coefs.abs().sum(0)).sort_values()
     x2var = (coefs.abs().sum(1)).sort_values()
@@ -2647,9 +2785,13 @@ def cross_data_type_predictions() -> None:
         cbar_kws=dict(label=r"Coefficient ($\beta$)"),
         rasterized=True,
         metric="correlation",
+        row_colors=coefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=coefs2,
+        col_colors_cmaps=["PuOr_r"],
     )
     grid.savefig(
-        output_dir / "coefficients.top_variables.clustermap.svg",
+        output_dir / "correlation.top_variables.clustermap.svg",
         **figkws,
     )
     plt.close(grid.fig)
@@ -2819,6 +2961,57 @@ def integrate_nmr_flow() -> None:
         output_dir / "rCCA_integration.sample_correlation.clustermap.attributes.svg", **figkws
     )
 
+    # Let's investigate the relationship between variables
+
+    stats_f1 = results_dir / "supervised_NMR" / "supervised.joint_model.model_fits.csv"
+    stats1 = pd.read_csv(stats_f1, index_col=0)
+    rcoefs1 = (
+        stats1.query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+        .rename("NMR_change")
+    )
+    stats_f2 = results_dir / "supervised_flow_cytometry" / "supervised.joint_model.model_fits.csv"
+    stats2 = pd.read_csv(stats_f2, index_col=0)
+    rcoefs2 = (
+        stats2.query("model == 'mlm'")
+        .loc["WHO_score_sample"]
+        .set_index("feature")["coefs"]
+        .rename("flow_cytometry_change")
+    )
+
+    coefs1 = pd.DataFrame(ccaCV.ws[0], index=x1.columns)
+    coefs2 = pd.DataFrame(ccaCV.ws[1], index=x2.columns)
+    c = coefs1.T.join(coefs2.T).corr().loc[x1.columns, x2.columns]
+
+    grid = clustermap(
+        c,
+        cmap="RdBu_r",
+        center=0,
+        row_colors=rcoefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=rcoefs2,
+        col_colors_cmaps=["PuOr_r"],
+    )
+
+    x1var = (c.abs().sum(0)).sort_values()
+    x2var = (c.abs().sum(1)).sort_values()
+    n = 30
+    grid = clustermap(
+        c.loc[x2var.index[-n:], x1var.index[-n:]],
+        center=0,
+        cmap="RdBu_r",
+        xticklabels=True,
+        yticklabels=True,
+        cbar_kws=dict(label=r"Coefficient ($\beta$)"),
+        rasterized=True,
+        metric="correlation",
+        row_colors=rcoefs1,
+        row_colors_cmaps=["PuOr_r"],
+        col_colors=rcoefs2,
+        col_colors_cmaps=["PuOr_r"],
+    )
+    plt.close(grid.fig)
     # Let's investigate the new clusters of patients (stratification)
     from scipy.cluster.hierarchy import fcluster
 
