@@ -59,8 +59,7 @@ def main(cli: tp.Sequence[str] = None) -> int:
     supervised_temporal(x1, y1, attributes)
     feature_enrichment()
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
-
-    sns.regplot(x1["GlycA"], y["days_since_tosilizumab_start"])
+    # sns.regplot(x1["GlycA"], y["days_since_tosilizumab_start"])
 
     # Investigate NMR features
     # # feature frequency
@@ -1765,6 +1764,7 @@ def supervised_joint(
     overwrite: bool = False,
 ) -> None:
     """A single model of disease severity adjusted for various confounders."""
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
     import statsmodels.formula.api as smf
 
     output_dir = (results_dir / f"supervised_{data_type}{suffix}").mkdir()
@@ -1791,6 +1791,17 @@ def supervised_joint(
     if data_type == "flow_cytometry":
         for k, v in repl_.items():
             x.columns = x.columns.str.replace(k, v, regex=False)
+
+    # Assess colinearity
+    d = y[attrs].dropna().assign(Intercept=1)
+    for attr in attrs:
+        if d[attr].dtype.name == "category":
+            d[attr] = d[attr].cat.codes
+    var = pd.Series(
+        [variance_inflation_factor(d.values, i) for i in range(d.shape[1])], index=d.columns
+    )
+    assert (var.drop("Intercept") < 3).all()
+    var.to_csv(output_dir / "supervised.variance_inflation_factor.csv")
 
     if not stats_f.exists() or overwrite:
         data = z_score(x).join(y[attrs + ["patient_code"]]).dropna(subset=attrs)
@@ -1839,8 +1850,21 @@ def supervised_joint(
         x.columns = x.columns.str.replace("/_", "_/", regex=False)
 
     # Plot
+    res = pd.read_csv(stats_f, index_col=0).drop(["Intercept", "Group Var"]).query("model == 'mlm'")
+    res.index = res.index.str.replace(r"\[.*", "")
+    p = (res["coefs"].abs()).groupby(level=0).sum()
+    p = (res["qvalues"] < 0.05).groupby(level=0).sum()
+    fig, ax = plt.subplots(figsize=(3, 3))
+    sns.barplot(x=p, y=p.index, color=sns.color_palette()[0])
+    for i, (idx, c) in enumerate(p.iteritems()):
+        ax.text(c, i, s=c, va="center")
+    ax.set(
+        xlabel="Number of significant features", ylabel="Factors", xlim=(0, p.max() + p.max() * 0.1)
+    )
+    fig.savefig(output_dir / f"supervised.joint_model.number_significant.svg", bbox_inches="tight")
+
     attribute = "WHO_score_sample"
-    res = pd.read_csv(stats_f, index_col=0).loc[attribute]
+    res = res.loc[attribute]
     assert np.allclose((res["ci_l"] - res["coefs"]).abs(), (res["ci_u"] - res["coefs"]).abs())
     res["ci"] = res["coefs"] - res["ci_l"]
 

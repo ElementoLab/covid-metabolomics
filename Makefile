@@ -19,7 +19,7 @@ analysis:  ## Run Python analysis
 	python -u src/analysis.py
 
 figures:  ## Produce figures in various formats
-	cd figures; ./process.sh
+	cd figures; ./_process.sh
 
 all: convert analysis figures ## Run all steps
 
