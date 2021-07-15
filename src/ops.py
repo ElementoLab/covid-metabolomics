@@ -7,11 +7,12 @@ import seaborn as sns
 import pingouin as pg
 import statsmodels.formula.api as smf
 
-from imc.types import DataFrame, Array, Figure
-from imc.utils import z_score
 from seaborn_extensions import clustermap, swarmboxenplot
 
-from src.config import results_dir, figkws
+from src.types import DataFrame, Array, Figure
+from src.config import results_dir, figkws, palettes, cmaps
+from src.utils import z_score, minmax_scale
+
 
 __all__ = [
     "unsupervised",
@@ -42,7 +43,7 @@ def unsupervised(
         attributes = list()
 
     output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
-    output_prefix = output_dir / f"unsupervised."
+    output_prefix = output_dir / "unsupervised."
 
     ## Clustermaps
     for c in ["abs", "z"]:
@@ -105,7 +106,7 @@ def get_explanatory_variables(
     """
     from sklearn.manifold import SpectralEmbedding
     import scipy
-    from imc.utils import minmax_scale
+    from seaborn_extensions.annotated_clustermap import plot_attribute_heatmap
 
     output_dir = (results_dir / f"unsupervised_{data_type}{suffix}").mkdir()
     output_prefix = output_dir / "unsupervised.variable_contribution_SpectralEmbedding."
@@ -144,9 +145,12 @@ def get_explanatory_variables(
     res.to_csv(output_prefix + "correlation.sample_ordering.csv")
 
     for text, label in [(False, "."), (True, ".with_text.")]:
-        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        fig, ax = plt.subplots(1, 1, figsize=(4 * 1.173175, 4))
         # # plot sample scatter
-        ax.scatter(res["SE1"], res["SE2"], c=res["joint"], cmap="RdBu_r")
+        m = ax.scatter(res["SE1"], res["SE2"], c=res["joint"], cmap="PiYG_r")
+        bb = ax.get_position()
+        cax = fig.add_axes((bb.xmax, bb.ymin, bb.width * 0.05, bb.height))
+        _ = fig.colorbar(m, label="Pseudotime", cax=cax)
         # # plot variables as vectors
         cmap = plt.get_cmap("inferno")
         vmin, vmax = feat_res["joint"].apply([min, max])
@@ -167,6 +171,7 @@ def get_explanatory_variables(
                 ax.scatter(
                     feat_res.loc[i, "SE1"] / 10, feat_res.loc[i, "SE2"] / 10, s=1, color="green"
                 )
+            ax.axis("off")
         fig.savefig(output_prefix + f"correlation.scatter_vectors{label}svg", **figkws)
 
     # Heatmap ordered
@@ -227,7 +232,7 @@ def get_explanatory_variables(
 
 
 def overlay_individuals_over_global(
-    x: DataFrame, y: DataFrame, data_type: str, suffix: str = ""
+    x: DataFrame, y: DataFrame, data_type: str, suffix: str = "", attributes: tp.Sequence[str] = []
 ) -> None:
     """
     Find variables explaining the latent space discovered unsupervisedly.

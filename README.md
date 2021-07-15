@@ -1,4 +1,4 @@
-# Metabolic measurements of serum from COVID-19 patients
+# Joint immune-metabolic profiling of COVID-19 for precise disease monitoring
 
 <!-- [![PEP compatible](http://pepkit.github.io/img/PEP-compatible-green.svg)](http://pep.databio.org/) -->
 
@@ -34,6 +34,8 @@ To reproduce analysis, simply do:
 $ make requirements
 $ make
 ```
+
+If you wish to run a portion of the analysis interactively say with IPython, make sure the repository root is added to your `PYTHONPATH` to allow importing of the `src` module. IPython may already do this by default.
 
 ### Requirements
 

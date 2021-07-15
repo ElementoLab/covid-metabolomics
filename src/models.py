@@ -7,7 +7,7 @@ import pymde
 import scanpy as sc
 from anndata import AnnData
 
-from imc.types import DataFrame, Series, Path, Array
+from src.types import DataFrame, Series, Path, Array
 
 __all__ = ["DataSet", "PyMDE", "DiffMap", "AnnData"]
 
@@ -15,8 +15,8 @@ __all__ = ["DataSet", "PyMDE", "DiffMap", "AnnData"]
 @dataclass
 class DataSet:
     x: DataFrame
-    obs: DataFrame = None
-    var: DataFrame = None
+    obs: tp.Optional[DataFrame] = None
+    var: tp.Optional[DataFrame] = None
     name: tp.Optional[str] = None
     data_type: tp.Optional[str] = None
     attributes: tp.Sequence[str] = ()

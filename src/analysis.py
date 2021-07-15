@@ -14,46 +14,45 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pingouin as pg
 
-from imc.types import Path, Series, DataFrame
-from imc.utils import z_score
-from imc.graphics import close_plots
 from seaborn_extensions import clustermap, swarmboxenplot, volcano_plot
 from seaborn_extensions.annotated_clustermap import is_numeric
 
 from src.config import *
+from src.types import Path, Series, DataFrame
 from src.models import DataSet, AnnData
 from src.ops import (
     unsupervised,
     get_explanatory_variables,
     overlay_individuals_over_global,
-    plot_projection,
 )
+from src.utils import z_score, close_plots
 
 
-cli = None
-
-
-def main(cli: tp.Sequence[str] = None) -> int:
+def main() -> int:
     """The main function to run the analysis."""
-    # args = get_parser().parse_args(cli)
-
-    # Inspect panel regardless of feature abundance
+    print("Starting analysis.")
+    # Describe NMR panel
+    # # technical robustness
     get_nmr_feature_technical_robustness()
     plot_nmr_technical_robustness()
-    # TODO: bring here plots on feature classes
-
-    # Our cohort
+    # # feature class frequency
+    plot_nmr_feature_annotations()
+    # # Feature-feature relationships and their classes
     x1, y1 = get_x_y_nmr()
+    get_feature_network(x1, y1)
+    feature_physical_aggregate_change(x1, y1)
+    feature_properties_change(x1)
+    feature_properties_pseudotime(x1)
 
-    unsupervised(x1, y1, attributes, data_type="NMR")
-
+    # NMR data analysis
+    x1, y1 = get_x_y_nmr()
+    var = get_nmr_feature_annotations()
+    unsupervised(x1, y1, var, attributes, data_type="NMR")
     get_explanatory_variables(x1, y1, "NMR")
     latent_association(x1, y1, data_type="NMR")
     risk_association(x1, y1, data_type="NMR")
     speed_association(y1, data_type="NMR")
-
-    overlay_individuals_over_global(x1, y1, data_type="NMR")
-
+    overlay_individuals_over_global(x1, y1, data_type="NMR", attributes=attributes)
     supervised(x1, y1, attributes)
     supervised_joint(x1, y1, attributes)
     supervised_temporal(x1, y1, attributes)
@@ -61,33 +60,20 @@ def main(cli: tp.Sequence[str] = None) -> int:
     # TODO: compare with signature from UK biobank: https://www.medrxiv.org/highwire/filestream/88249/field_highwire_adjunct_files/1/2020.07.02.20143685-2.xlsx
     # sns.regplot(x1["GlycA"], y["days_since_tosilizumab_start"])
 
-    # Investigate NMR features
-    # # feature frequency
-    plot_nmr_feature_annotations()
-    # # Feature-feature relationships and their classes
-    get_feature_network(x1, y1)
-    feature_physical_aggregate_change(x1, y1)
-    feature_properties_change(x1)
-    feature_properties_pseudotime(x1)
-
     # Flow cytometry
     x1, y1 = get_x_y_nmr()
     x2, y2 = get_x_y_flow()
     x1, x2, y = get_matched_nmr_and_flow(x1, y1, x2, y2)
-
-    # unsupervised(x1, y, attributes, data_type="NMR", suffix="_strict")
-    # overlay_individuals_over_global(x1, y, data_type="NMR", suffix="_strict")
-    unsupervised(x2, y, attributes, data_type="flow_cytometry")
-    overlay_individuals_over_global(x2, y, data_type="flow_cytometry")
+    var = get_flow_feature_annotations(x2)
+    unsupervised(x2, y, var, attributes, data_type="flow_cytometry")
+    overlay_individuals_over_global(x2, y, data_type="flow_cytometry", attributes=attributes)
     supervised_joint(x2, y, attributes, data_type="flow_cytometry", overwrite=True)
 
     # Joint data types
     # # See how variables relate to each other
     cross_data_type_predictions()
-
     # # Develop common latent space
     integrate_nmr_flow()
-
     # # Predict disease severity based on combination of data
     predict_outcomes()
 
@@ -477,6 +463,12 @@ def plot_global_stats(x: DataFrame) -> None:
 
 @close_plots
 def compare_clinical_and_panel():
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    import statsmodels.formula.api as smf
+    from seaborn_extensions import volcano_plot
+
+    output_dir = (results_dir / "clinical_parameters").mkdir()
+    output_prefix = output_dir / "clinical_parameters."
     labs = [
         "total_bilirubin",
         "ALT",
@@ -491,7 +483,7 @@ def compare_clinical_and_panel():
     ]
     ## ranges are collapsed to min-max across sex
     healthy_ranges = {
-        "total_bilirubin": (1.0, 1.4),
+        "total_bilirubin": (0.3, 1.2),
         "AST": (10, 40),
         "ALT": (7, 56),
         "creatinine": (0.6, 1.3),
@@ -523,7 +515,7 @@ def compare_clinical_and_panel():
     n = fig.axes[0].get_gridspec().ncols
     for ax in fig.axes[-n:]:
         ax.set_xlabel("WHO_score_sample")
-    fig.savefig(results_dir / "clinical_parameters.blood_liver.change_with_severity.svg", **figkws)
+    fig.savefig(output_prefix + "blood_liver.change_with_severity.svg", **figkws)
 
     # #
     labs += ["WHO_score_sample"]
@@ -545,9 +537,7 @@ def compare_clinical_and_panel():
         figsize=(5, 10),
     )
     grid.ax_heatmap.set_ylabel("Metabolites" + grid.ax_heatmap.get_ylabel())
-    grid.fig.savefig(
-        results_dir / "clinical_parameters.blood_liver.correlation_with_metabolism.svg", **figkws
-    )
+    grid.fig.savefig(output_prefix + "blood_liver.correlation_with_metabolism.svg", **figkws)
 
     # (con.loc[x.columns, 'ALT'] - con.loc[x.columns, 'WHO_score_sample'] * -1).abs().sort_values()
     # fig, stats = swarmboxenplot(data=x.join(y), x='WHO_score_sample', y='XL_HDL_P')
@@ -568,9 +558,7 @@ def compare_clinical_and_panel():
             ylabel=f"NMR panel ({unit})",
         )
     axes[-1].loglog()
-    fig.savefig(results_dir / "NMR_vs_clinical.creatinine.svg", **figkws)
-
-    import statsmodels.formula.api as smf
+    fig.savefig(output_prefix + "NMR_vs_clinical.creatinine.svg", **figkws)
 
     data = z_score(z.dropna().astype(float))
 
@@ -578,6 +566,42 @@ def compare_clinical_and_panel():
     labs.pop(labs.index("WHO_score_sample"))
     labs.pop(labs.index("ALT-AST_log_ratio"))
 
+    # Assess colinearity
+    d = y[labs].dropna().assign(Intercept=1)
+    _var = pd.Series(
+        [variance_inflation_factor(d.values, i) for i in range(d.shape[1])],
+        index=d.columns,
+        name="variance_inflation_factor",
+    )
+    _var = _var.drop("Intercept")
+
+    # # dropping hematocrit as it is highly colinear with hemoglobin
+    if (_var < 5).any():
+        v = _var.loc[_var > 5].tail(1).index[0]
+        print(f"Dropping {v} as it is colinear.")
+        labs.pop(labs.index(v))
+    _var = _var.to_frame().assign(dropped=False)
+    _var.loc[v, "dropped"] = True
+    _var.to_csv(output_prefix + "variance_inflation_factor.csv")
+
+    # Regress on severity
+    mdf = smf.glm(f"WHO_score_sample ~ {' + '.join(labs)}", data).fit()
+    res = mdf.summary2().tables[1]
+    res["p-cor"] = pg.multicomp(res["P>|z|"].values, method="fdr_bh")[1]
+
+    p = (
+        res.rename(columns={"Coef.": "hedges", "P>|z|": "p-unc"})
+        .assign(A="Lower severity", B="Higher severity")
+        .rename_axis(index="Variable")
+        .reset_index()
+    )
+    p["hedges"] *= -1
+    fig = volcano_plot(p, n_top=p.shape[0], diff_threshold=None)
+    fig.axes[0].axhline(-np.log10(0.05), color="grey", linestyle="--")
+    fig.axes[0].set(xlabel="Effect size\n(association with disease severity)")
+    fig.savefig(output_prefix + "severity.volcano_plot.svg", bbox_inches="tight")
+
+    # Regress features
     _res_glm = list()
     for feat in tqdm(x.columns, desc="feature", position=1):
         mdf = smf.glm(f"{feat} ~ {' + '.join(labs)}", data).fit()
@@ -587,9 +611,23 @@ def compare_clinical_and_panel():
     res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
 
     coefs = res_glm.reset_index().pivot_table(index="feature", columns="index", values="coefs")
+    grid = clustermap(
+        coefs,
+        cbar_kws=dict(label="-log10(p-value)"),
+        cmap="RdBu_r",
+        robust=True,
+        center=0,
+        dendrogram_ratio=0.1,
+        row_colors=var[["metagroup", "group"]],
+        figsize=(5, 10),
+    )
+    grid.fig.savefig(
+        output_prefix + "blood_liver.regression_with_metabolism.coefficients.clustermap.svg",
+        **figkws,
+    )
+
     qvals = res_glm.reset_index().pivot_table(index="feature", columns="index", values="qvalues")
     log_qvals = -np.log10(qvals)
-
     grid = clustermap(
         log_qvals,
         cbar_kws=dict(label="-log10(p-value)"),
@@ -601,7 +639,7 @@ def compare_clinical_and_panel():
         figsize=(5, 10),
     )
     grid.fig.savefig(
-        results_dir / "clinical_parameters.blood_liver.regression_with_metabolism.svg", **figkws
+        output_prefix + "blood_liver.regression_with_metabolism.pvalues.clustermap.svg", **figkws
     )
 
 
@@ -613,7 +651,7 @@ def get_feature_annotations(x: DataFrame, data_type: str) -> DataFrame:
     raise ValueError("Data type not understood. Choose one of 'NMR' or 'flow_cytometry'.")
 
 
-def get_flow_feature_annotations(x):
+def get_flow_feature_annotations(x: DataFrame) -> DataFrame:
     import requests
     import json
 
@@ -626,38 +664,38 @@ def get_flow_feature_annotations(x):
     return feature_annotation
 
 
-@close_plots
-def plot_all_signatures():
-    from src.ukbb import get_signatures as ukbbsigs
-    from src.dierckx import get_signatures as dierckxsigs
+# @close_plots
+# def plot_all_signatures() -> None:
+#     from src.ukbb import get_signatures as ukbbsigs
+#     from src.dierckx import get_signatures as dierckxsigs
 
-    stats_f = results_dir / "supervised" / "supervised.joint_model.model_fits.csv"
-    sig = (
-        pd.read_csv(stats_f, index_col=0)
-        .query("model == 'mlm'")
-        .loc["WHO_score_sample"]
-        .set_index("feature")["coefs"]
-        .rename("severity")
-    )
-    dim_f = (
-        results_dir
-        / "unsupervised_NMR"
-        / "unsupervised.variable_contribution_SpectralEmbedding.correlation.variable_ordering.csv"
-    )
-    dim = pd.read_csv(dim_f, index_col=0)
+#     stats_f = results_dir / "supervised" / "supervised.joint_model.model_fits.csv"
+#     sig = (
+#         pd.read_csv(stats_f, index_col=0)
+#         .query("model == 'mlm'")
+#         .loc["WHO_score_sample"]
+#         .set_index("feature")["coefs"]
+#         .rename("severity")
+#     )
+#     dim_f = (
+#         results_dir
+#         / "unsupervised_NMR"
+#         / "unsupervised.variable_contribution_SpectralEmbedding.correlation.variable_ordering.csv"
+#     )
+#     dim = pd.read_csv(dim_f, index_col=0)
 
-    ukbb_sigs = ukbbsigs().sort_index()
-    dierckx_sigs = dierckxsigs().sort_index()
+#     ukbb_sigs = ukbbsigs().sort_index()
+#     dierckx_sigs = dierckxsigs().sort_index()
 
-    p = (
-        ukbb_sigs.join(sig)
-        .join(dim)
-        .join(dierckx_sigs)
-        .drop("future_infectious_disease", 1)
-        .dropna()
-    )
+#     p = (
+#         ukbb_sigs.join(sig)
+#         .join(dim)
+#         .join(dierckx_sigs)
+#         .drop("future_infectious_disease", 1)
+#         .dropna()
+#     )
 
-    grid = clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
+#     grid = clustermap(p, col_cluster=False, center=0, cmap="RdBu_r")
 
 
 def get_nmr_feature_annotations() -> DataFrame:
@@ -737,11 +775,10 @@ def get_nmr_feature_annotations() -> DataFrame:
     ] = "Lipid"
 
     annot["lipid_class"] = np.nan
-    for lipid_class in lipoprots:
+    for k, v in lipoprots.items():
         annot.loc[
-            annot.index.str.endswith(lipid_class) | annot.index.str.endswith(lipid_class + "_pct"),
-            "lipid_class",
-        ] = lipoprots[lipid_class]
+            annot.index.str.endswith(k) | annot.index.str.endswith(k + "_pct"), "lipid_class"
+        ] = v
     annot["lipid_density"] = np.nan
     for density in densities:
         annot.loc[
@@ -1753,6 +1790,234 @@ def supervised(
         )
 
 
+def supervised_liver(
+    x: DataFrame,
+    y: DataFrame,
+    attributes: tp.Sequence[str] = ["ALT"],
+    data_type: str = "NMR",
+    log: bool = False,
+    suffix: str = "",
+    plot_all: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """A single model of disease severity adjusted for various confounders."""
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    import statsmodels.formula.api as smf
+
+    output_dir = (results_dir / f"supervised_{data_type}{suffix}").mkdir()
+
+    if log:
+        x = np.log1p(x)
+
+    # # convert ordinal categories to numeric
+    for attr in ["WHO_score_sample", "WHO_score_patient"]:
+        y[attr] = y[attr].cat.codes.astype(float).replace(-1, np.nan)
+    for attr in attributes:
+        if y[attr].dtype.name == "Int64":
+            y[attr] = y[attr].astype(float)
+    cats = list(filter(lambda w: ~is_numeric(y[w]), attributes))
+    nums = list(filter(lambda w: is_numeric(y[w]), attributes))
+
+    # Use also a MLM and compare to GLM
+    stats_f = output_dir / "supervised.joint_model.model_fits.csv"
+
+    attrs = ["age", "race", "bmi", "WHO_score_sample"]
+    model_str = "{} ~ " + " + ".join(attrs)
+
+    repl_ = {"/": "__", "+": "__plus__", "-": "__minus__", "(": "__op__", ")": "__cl__"}
+    if data_type == "flow_cytometry":
+        for k, v in repl_.items():
+            x.columns = x.columns.str.replace(k, v, regex=False)
+
+    # Assess colinearity
+    d = y[attrs].dropna().assign(Intercept=1)
+    for attr in attrs:
+        if d[attr].dtype.name == "category":
+            d[attr] = d[attr].cat.codes
+    var = pd.Series(
+        [variance_inflation_factor(d.values, i) for i in range(d.shape[1])], index=d.columns
+    )
+    assert (var.drop("Intercept") < 5).all()
+    var.to_csv(output_dir / "supervised.variance_inflation_factor.csv")
+
+    if not stats_f.exists() or overwrite:
+        data = z_score(x).join(y[attrs + ["patient_code"]]).dropna(subset=attrs)
+
+        # # GLM
+        _res_glm = list()
+        for feat in tqdm(x.columns, desc="feature", position=1):
+            mdf = smf.glm(model_str.format(feat), data).fit()
+            res = (
+                mdf.params.to_frame("coefs")
+                .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+                .join(mdf.pvalues.rename("pvalues"))
+                .assign(feature=feat)
+            )
+            # res = res.loc[res.index.str.contains(attr)]
+            _res_glm.append(res)
+        res_glm = pd.concat(_res_glm)
+        res_glm["qvalues"] = pg.multicomp(res_glm["pvalues"].values, method="fdr_bh")[1]
+
+        # # # Mixed effect
+        _res_mlm = list()
+        for feat in tqdm(x.columns, desc="feature", position=2):
+            mdf = smf.mixedlm(model_str.format(feat), data, groups=data["patient_code"]).fit()
+            res = (
+                mdf.params.to_frame("coefs")
+                .join(mdf.pvalues.rename("pvalues"))
+                .join(mdf.conf_int().rename(columns={0: "ci_l", 1: "ci_u"}))
+                .assign(feature=feat)
+            )
+            # res = res.loc[res.index.str.contains(attr)]
+            _res_mlm.append(res)
+        res_mlm = pd.concat(_res_mlm)
+        res_mlm["qvalues"] = pg.multicomp(res_mlm["pvalues"].values, method="fdr_bh")[1]
+
+        res = pd.concat([res_mlm.assign(model="mlm"), res_glm.assign(model="glm")])
+        res = res.rename_axis(index="contrast")
+        if data_type == "flow_cytometry":
+            for k, v in list(repl_.items())[::-1]:
+                res["feature"] = res["feature"].str.replace(v, k, regex=False)
+            res["feature"] = res["feature"].str.replace("/_", "_/", regex=False)
+        res.to_csv(stats_f)
+
+    if data_type == "flow_cytometry":
+        for k, v in list(repl_.items())[::-1]:
+            x.columns = x.columns.str.replace(v, k, regex=False)
+        x.columns = x.columns.str.replace("/_", "_/", regex=False)
+
+    # Plot
+    res = pd.read_csv(stats_f, index_col=0).drop(["Intercept", "Group Var"]).query("model == 'mlm'")
+    res.index = res.index.str.replace(r"\[.*", "")
+    p = (res["coefs"].abs()).groupby(level=0).sum()
+    p = (res["qvalues"] < 0.05).groupby(level=0).sum()
+    fig, ax = plt.subplots(figsize=(3, 3))
+    sns.barplot(x=p, y=p.index, color=sns.color_palette()[0])
+    for i, (idx, c) in enumerate(p.iteritems()):
+        ax.text(c, i, s=c, va="center")
+    ax.set(
+        xlabel="Number of significant features", ylabel="Factors", xlim=(0, p.max() + p.max() * 0.1)
+    )
+    fig.savefig(output_dir / f"supervised.joint_model.number_significant.svg", bbox_inches="tight")
+
+    attribute = "WHO_score_sample"
+    res = res.loc[attribute]
+    assert np.allclose((res["ci_l"] - res["coefs"]).abs(), (res["ci_u"] - res["coefs"]).abs())
+    res["ci"] = res["coefs"] - res["ci_l"]
+
+    output_prefix = output_dir / f"supervised.joint_model.{attribute}."
+
+    res_glm = res.query("model == 'glm'").set_index("feature")
+    res_mlm = res.query("model == 'mlm'").set_index("feature")
+
+    cglm = res_glm["coefs"].rename("GLM")
+    cmlm = res_mlm["coefs"].rename("MLM")
+    c = cglm.to_frame().join(cmlm)
+    pglm = res_glm["pvalues"].rename("GLM")
+    pmlm = res_mlm["pvalues"].rename("MLM")
+    p = pglm.to_frame().join(pmlm)
+    q = p.copy()
+    for col in q:
+        q[col] = pg.multicomp(q[col].values, method="fdr_bh")[1]
+
+    # Compare models
+    v = c.abs().max()
+    v += v * 0.1
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    ax.plot((-v, v), (-v, v), linestyle="--", color="grey", zorder=-2)
+    ax.scatter(
+        c["GLM"],
+        c["MLM"],
+        c=p.mean(1),
+        cmap="Reds_r",
+        vmin=0,
+        vmax=1.5,
+        s=5,
+        alpha=0.5,
+    )
+    _s = pg.corr(c["GLM"], c["MLM"]).squeeze()
+    ax.set(
+        title=attribute + f"; r = {_s['r']:.3f}",
+        xlabel=r"$\beta$   (GLM)",
+        ylabel=r"$\beta$   (MLM)",
+    )
+    fig.savefig(
+        output_prefix + "General_vs_Mixed_effect_model_comparison.scatter.svg",
+        **figkws,
+    )
+
+    # Plot all variables as rank vs change plot
+    # # check error is symmetric
+    var = get_feature_annotations(x, data_type=data_type).reindex(c.index)
+    var["unit"] = "%"
+    cat = var["group"].astype(pd.CategoricalDtype())
+    cmap = sns.color_palette("tab20")
+    score = (-np.log10(res_mlm["qvalues"])) * (res_mlm["coefs"] > 0).astype(int).replace(0, -1)
+    ci = res_mlm["ci"].rename("MLM")
+    qmlm = res_mlm["qvalues"]
+    n_top = 10
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(6, 3 * 2))
+    for ax in fig.axes:
+        ax.axhline(0, linestyle="--", color="grey")
+    feats = (
+        score.sort_values().head(n_top).index.tolist()
+        + score.sort_values().tail(n_top).index.tolist()
+    )
+    for ax, crit, text in zip(fig.axes, [ci.index, feats], [False, True]):
+        rank = score.loc[crit].rank()
+        for i, group in enumerate(cat.unique()):
+            sel = (cat == group) & cat.index.to_series().rename("group").isin(rank.index)
+            # ax.errorbar(
+            #     rank.loc[sel],
+            #     score.loc[sel],
+            #     fmt="o",
+            #     yerr=ci.loc[sel],
+            #     color=cmap[i],
+            #     alpha=0.2,
+            # )
+            f = sel[sel].index
+            ax.scatter(
+                rank.loc[f],
+                score.loc[f],
+                color=cmap[i],
+                s=10 + 2.5 ** -np.log10(qmlm.loc[f]),
+                alpha=0.5,
+                label=group,
+            )
+            if text:
+                for idx in rank.loc[f].index:
+                    ax.text(rank.loc[idx], score.loc[idx], s=idx, rotation=90, ha="center")
+        v = (score.abs() + res_mlm["ci"]).max()
+        v += v * 0.1
+        ax.set(
+            title=attribute,
+            xlabel=r"Metabolites (ranked)",
+            ylabel=r"Change with COVID-19 severity (signed -log10(p-value))",
+            ylim=(-v, v),
+        )
+    ax0.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    from matplotlib.lines import Line2D
+
+    _p = qmlm.min()
+    s0 = Line2D([0], [0], marker="o", label="1.0 (max)", markersize=np.sqrt(10 + 1))
+    s1 = Line2D(
+        [0],
+        [0],
+        marker="o",
+        label=f"{_p:.3e} (min)",
+        markersize=np.sqrt(10 + 2.5 ** -np.log10(_p)),
+    )
+    ax1.legend(handles=[s0, s1], title="FDR", loc="upper left", bbox_to_anchor=(1, 0))
+    ax1.axvline((ax1.get_xlim()[1] - ax1.get_xlim()[0]) / 2, linestyle="--", color="grey")
+    ax0.axvline(n_top, linestyle="--", color="grey")
+    ax0.axvline(score.shape[0] - n_top, linestyle="--", color="grey")
+    fig.savefig(
+        output_prefix + "rank_vs_change.scatter.svg",
+        **figkws,
+    )
+
+
 def supervised_joint(
     x: DataFrame,
     y: DataFrame,
@@ -1800,7 +2065,7 @@ def supervised_joint(
     var = pd.Series(
         [variance_inflation_factor(d.values, i) for i in range(d.shape[1])], index=d.columns
     )
-    assert (var.drop("Intercept") < 3).all()
+    assert (var.drop("Intercept") < 5).all()
     var.to_csv(output_dir / "supervised.variance_inflation_factor.csv")
 
     if not stats_f.exists() or overwrite:

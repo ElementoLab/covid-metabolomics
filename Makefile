@@ -16,7 +16,7 @@ convert:  ## Convert R data to CSV/parquet
 	Rscript src/_r_to_parquet.R
 
 analysis:  ## Run Python analysis
-	python -u src/analysis.py
+	PYTHONPATH=. python -u src/analysis.py
 
 figures:  ## Produce figures in various formats
 	cd figures; ./_process.sh
