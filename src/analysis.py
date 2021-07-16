@@ -71,7 +71,7 @@ def main() -> int:
 
     # Joint data types
     # # See how variables relate to each other
-    cross_data_type_predictions()
+    cross_data_type_influence()
     # # Develop common latent space
     integrate_nmr_flow()
     # # Predict disease severity based on combination of data
@@ -79,6 +79,18 @@ def main() -> int:
 
     # Fin
     return 0
+
+
+def _manuscript_values():
+    """Stats on patients (for manuscript text)"""
+    _, y = get_x_y_nmr()
+    y["group"] = y["group"].replace("non-covid", "control").replace("convalescent", "covid")
+    y["group"].value_counts()
+    y[["age", "patient_code", "group"]].drop_duplicates()["group"].value_counts()
+    y[["age", "patient_code", "group"]].drop_duplicates().groupby("group")["age"].median()
+    stats_f = results_dir / "supervised_NMR" / "supervised.joint_model.model_fits.csv"
+    stats = pd.read_csv(stats_f, index_col=0).query(f"model == 'mlm'")
+    (stats.loc["WHO_score_sample", "qvalues"] < 0.05).sum()
 
 
 def get_change_per_patient(x: DataFrame, y: DataFrame) -> None:
@@ -2898,7 +2910,7 @@ def get_matched_nmr_and_flow(
     return nx1, nx2, ny
 
 
-def cross_data_type_predictions(cv: bool = True) -> None:
+def cross_data_type_influence(cv: bool = True) -> None:
     """
     Integrate the two data types on common ground
     """
