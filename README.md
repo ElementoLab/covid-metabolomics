@@ -1,6 +1,9 @@
-# Joint immune-metabolic profiling of COVID-19 for precise disease monitoring
+# Metabolic and immune markers for precise monitoring of COVID-19 severity and treatment
 
-<!-- [![PEP compatible](http://pepkit.github.io/img/PEP-compatible-green.svg)](http://pep.databio.org/) -->
+Andre Figueiredo Rendeiro,  Charles Kyriakos Vorkas,  Jan Krumsiek, Harjot Singh,  Shashi N Kapadia,  Luca Vincenzo Cappelli,  Maria Teresa Cacciapuoti,  Giorgio Inghirami,  Olivier Elemento,  Mirella Salvatore.
+**Metabolic and immune markers for precise monitoring of COVID-19 severity and treatment**. MedRxiv (2021). doi:10.1101/2021.09.05.21263141
+
+[![medRxiv DOI badge](https://zenodo.org/badge/doi/10.1101/2021.09.05.21263141.svg)](https://doi.org/10.1101/2021.09.05.21263141) ⬅️ read the preprint here
 
 
 ## Organization
@@ -39,20 +42,5 @@ If you wish to run a portion of the analysis interactively say with IPython, mak
 
 ### Requirements
 
-- Python 3.7+ (running on 3.8.2)
+- Python 3.8+ (running on 3.8.2)
 - Python packages as specified in the [requirements file](requirements.txt) - install with `make requirements` or `pip install -r requirements.txt`.
-
-
-### Virtual environment
-
-It is recommended to compartimentalize the analysis software from the system's using virtual environments, for example.
-
-Here's how to create one with the repository and installed requirements:
-
-```bash
-git clone git@github.com:ElementoLab/covid-metabolomics.git
-cd covid-metabolomics
-virtualenv .venv
-source activate .venv/bin/activate
-pip install -r requirements.txt
-```
